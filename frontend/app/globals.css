@@ -1,0 +1,84 @@
+@import 'leaflet/dist/leaflet.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --color-bg-light: #FFFAF0;
+    --color-bg-card: #FFFFFF;
+    --color-border-light: #E2E8F0;
+    --color-primary: #0284C7;
+  }
+
+  body {
+    background-color: #FFFAF0;
+    color: #0F172A;
+    font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #FFFAF0;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94A3B8;
+}
+
+/* SaaS Light Card Utilities */
+.glass-cockpit {
+  background: #FFFFFF;
+  border: 1px solid #E2E8F0;
+  box-shadow: 0 1px 3px 0 rgba(15, 23, 42, 0.05), 0 1px 2px -1px rgba(15, 23, 42, 0.05);
+}
+
+.glass-card {
+  background: #FFFFFF;
+  border: 1px solid #E2E8F0;
+  box-shadow: 0 1px 3px 0 rgba(15, 23, 42, 0.05);
+}
+
+.glass-card-glow {
+  background: #FFFFFF;
+  border: 1px solid #BAE6FD;
+  box-shadow: 0 4px 14px 0 rgba(2, 132, 199, 0.08);
+}
+
+.glass-nav {
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid #E2E8F0;
+}
+
+/* HUD Text Accents for Light Theme */
+.hud-text-cyan {
+  color: #0284C7;
+}
+
+.hud-text-emerald {
+  color: #16A34A;
+}
+
+.hud-text-amber {
+  color: #D97706;
+}
+
+.hud-text-rose {
+  color: #DC2626;
+}
