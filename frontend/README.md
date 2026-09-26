@@ -1,49 +1,51 @@
 # SafeWay-AI Frontend Application
 
-Modern React & Vite web application for the SafeWay-AI Driver Safety & Intelligent Mobility Platform.
+Intelligent Road Safety & Driver Assistance Platform built with Next.js 14 (App Router), TypeScript, and Tailwind CSS.
 
-## Technology Stack
-- **Framework**: React 19 + Vite 6
-- **Routing**: React Router 7
-- **Styling**: Tailwind CSS v4
-- **HTTP Client**: Axios
-- **Iconography**: Lucide React
+---
 
-## Project Structure
-```
-frontend/
-├── public/              # Static public assets
-├── src/
-│   ├── components/      # UI Layout & Toast components (Navbar, Sidebar, Toast, Layout)
-│   ├── context/         # AppContext for global UI state & API status monitoring
-│   ├── hooks/           # Custom React hooks
-│   ├── pages/           # Platform module shell views (Dashboard, Drowsiness, Signs, Challans, Hazards, SOS, Rules)
-│   ├── services/        # Axios API client (api.js) with interceptors and VITE_API_BASE_URL
-│   ├── utils/           # Helper utility functions
-│   ├── App.jsx          # Router layout declaration
-│   ├── index.css        # Tailwind v4 import & glassmorphism theme tokens
-│   └── main.jsx         # React application entry point
-├── .env.example         # Environment template configuration
-├── package.json         # Dependencies & scripts
-└── README.md            # Frontend documentation
-```
+## 🚀 Key Features & Components
 
-## Quick Start
+- **Smart Safety Demo Map** (`components/navigation/SmartSafetyDemoMap.tsx`):
+  - Visual route simulation with 200m circular safety warning zones around upcoming school and pedestrian crosswalks.
+  - Interactive slider, step controls (`[← Move Back]` / `[Forward →]`), and real-time distance calculations.
+  - Web Audio alert synthesizer and SpeechSynthesis voice advisories.
 
-### 1. Install Dependencies
+- **Traffic Rule Directory** (`components/traffic/TrafficRuleQuickDirectory.tsx`):
+  - Motor Vehicles Act (MVA 2019) regulations with state filters (Bihar, Delhi, Maharashtra, Central) and fine schedules.
+
+- **AI Driver Monitor** (`app/drowsiness/page.tsx`):
+  - Facial landmark tracking computing Eye Aspect Ratio (EAR) and 3.0s continuous eye closure alarm.
+
+- **Horizontal Top Navigation** (`components/layout/TopNavigation.tsx`):
+  - Sleek, full-width top navigation bar located directly beneath the main header.
+
+- **Collision & Road Safety** (`app/road-safety/page.tsx`, `app/emergency/page.tsx`):
+  - Front camera obstruction detection with automated 15-second SOS countdown dispatch.
+
+---
+
+## 🛠️ Technology Stack
+
+- **Framework**: Next.js 14.2 (App Router)
+- **Language**: TypeScript 5.7
+- **Styling**: Tailwind CSS 3.4
+- **Mapping**: Leaflet 1.9 & React-Leaflet
+- **Icons**: Lucide React
+- **Audio**: Web Audio API & Web Speech Synthesis
+
+---
+
+## 🏃 Getting Started
+
 ```bash
+# Install dependencies
 npm install
-```
 
-### 2. Configure Environment
-Create a `.env` file in `frontend/` directory (or copy `.env.example`):
-```env
-VITE_API_BASE_URL=http://localhost:5000/api
-```
-
-### 3. Run Development Server
-```bash
+# Start development server
 npm run dev
-```
 
-The application will start on `http://localhost:5173`.
+# Build production bundle
+npm run build
+```
+Application will be available at `http://localhost:3000`.
