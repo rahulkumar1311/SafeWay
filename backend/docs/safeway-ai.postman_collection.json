@@ -1,0 +1,248 @@
+{
+  "info": {
+    "_postman_id": "safeway-ai-backend-collection-id",
+    "name": "SafeWay-AI Backend API Collection",
+    "description": "Postman Collection for SafeWay-AI backend services including System Health, Traffic Rules, Challans, Road Hazards, Safety Analysis, Emergency Assistance, and AI Services.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5000/api",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "System Health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/health",
+          "host": ["{{baseUrl}}"],
+          "path": ["health"]
+        }
+      }
+    },
+    {
+      "name": "Traffic Rules",
+      "item": [
+        {
+          "name": "Get Rules by State",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rules/Bihar?category=Helmet&vehicleType=two-wheeler&page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["rules", "Bihar"],
+              "query": [
+                { "key": "category", "value": "Helmet" },
+                { "key": "vehicleType", "value": "two-wheeler" },
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Traffic Rule (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"state\": \"Bihar\",\n  \"category\": \"Helmet\",\n  \"title\": \"Riding Without Helmet\",\n  \"description\": \"Riding a two-wheeler without a protective helmet\",\n  \"vehicleType\": \"two-wheeler\",\n  \"fineAmount\": 1000,\n  \"sourceUrl\": \"https://transport.bihar.gov.in\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/rules",
+              "host": ["{{baseUrl}}"],
+              "path": ["rules"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Challan Information",
+      "item": [
+        {
+          "name": "Get Challan Fine Info by State",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/challans/Bihar?category=Speeding",
+              "host": ["{{baseUrl}}"],
+              "path": ["challans", "Bihar"],
+              "query": [{ "key": "category", "value": "Speeding" }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Road Hazards",
+      "item": [
+        {
+          "name": "Report Road Hazard",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"pothole\",\n  \"description\": \"Deep pothole near Gandhi Maidan intersection\",\n  \"latitude\": 25.61,\n  \"longitude\": 85.14,\n  \"severity\": \"high\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/hazards",
+              "host": ["{{baseUrl}}"],
+              "path": ["hazards"]
+            }
+          }
+        },
+        {
+          "name": "Get Road Hazards",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/hazards?type=pothole&page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["hazards"],
+              "query": [
+                { "key": "type", "value": "pothole" },
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Nearby Road Hazards",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/hazards/nearby?latitude=25.61&longitude=85.14&radius=10",
+              "host": ["{{baseUrl}}"],
+              "path": ["hazards", "nearby"],
+              "query": [
+                { "key": "latitude", "value": "25.61" },
+                { "key": "longitude", "value": "85.14" },
+                { "key": "radius", "value": "10" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Safety & Risk Analysis",
+      "item": [
+        {
+          "name": "Analyze Driving Risk",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"drowsinessScore\": 75,\n  \"speed\": 80,\n  \"speedLimit\": 60,\n  \"harshBraking\": 2,\n  \"roadHazard\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/safety/analyze",
+              "host": ["{{baseUrl}}"],
+              "path": ["safety", "analyze"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Emergency Assistance",
+      "item": [
+        {
+          "name": "Create Emergency Contact",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"6a7e1a91c715143fca2624e4\",\n  \"name\": \"Jane Doe\",\n  \"phone\": \"+919876543210\",\n  \"relationship\": \"Spouse\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/emergency/contacts",
+              "host": ["{{baseUrl}}"],
+              "path": ["emergency", "contacts"]
+            }
+          }
+        },
+        {
+          "name": "Get User Emergency Contacts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/emergency/contacts/6a7e1a91c715143fca2624e4",
+              "host": ["{{baseUrl}}"],
+              "path": ["emergency", "contacts", "6a7e1a91c715143fca2624e4"]
+            }
+          }
+        },
+        {
+          "name": "Trigger SOS Alert",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"6a7e1a91c715143fca2624e4\",\n  \"latitude\": 25.5941,\n  \"longitude\": 85.1376,\n  \"eventType\": \"CRASH\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/emergency/sos",
+              "host": ["{{baseUrl}}"],
+              "path": ["emergency", "sos"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "AI Services Integration",
+      "item": [
+        {
+          "name": "Analyze Drowsiness Frame",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"session_123\",\n  \"frameData\": \"data:image/jpeg;base64,sample_frame\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/ai/drowsiness/analyze",
+              "host": ["{{baseUrl}}"],
+              "path": ["ai", "drowsiness", "analyze"]
+            }
+          }
+        },
+        {
+          "name": "Analyze Traffic Sign Image",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"imageData\": \"data:image/jpeg;base64,sample_sign_frame\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/ai/traffic-sign/analyze",
+              "host": ["{{baseUrl}}"],
+              "path": ["ai", "traffic-sign", "analyze"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
