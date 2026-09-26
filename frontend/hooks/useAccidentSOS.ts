@@ -47,6 +47,12 @@ export function useAccidentSOS(options: UseAccidentSOSOptions) {
   const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isDispatchingRef = useRef<boolean>(false);
   const hasDispatchedIncidentRef = useRef<string | null>(null);
+  const latestLocationRef = useRef<DriverLocation | null>(null);
+  const incidentIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    incidentIdRef.current = incidentId;
+  }, [incidentId]);
 
   // Audio Context unlock & buzzer generator
   const initAudio = useCallback(() => {
@@ -97,7 +103,7 @@ export function useAccidentSOS(options: UseAccidentSOSOptions) {
     } catch {}
   }, [isMuted]);
 
-  // Acquire Live GPS Coordinates in Parallel
+  // Acquire Live GPS Coordinates
   const acquireLocation = useCallback(async (): Promise<DriverLocation | null> => {
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
       setLocationStatus('UNAVAILABLE');
@@ -116,33 +122,35 @@ export function useAccidentSOS(options: UseAccidentSOSOptions) {
             latitude: lat,
             longitude: lng,
             accuracy,
-            mapsUrl: `https://maps.google.com/?q=${lat},${lng}`,
+            mapsUrl: `https://www.google.com/maps?q=${lat},${lng}`,
             timestamp: new Date().toISOString()
           };
+          latestLocationRef.current = loc;
           setLocation(loc);
           setLocationStatus('ACQUIRED');
+          console.log(`[Road Safety SOS] Live GPS Acquired -> Lat: ${lat}, Lng: ${lng}, Accuracy: ${accuracy}m`);
           resolve(loc);
         },
         (err) => {
-          console.warn('[AccidentSOS] Geolocation lookup error:', err.message);
+          console.warn('[Road Safety SOS] Geolocation note:', err.message);
           if (err.code === err.PERMISSION_DENIED) {
             setLocationStatus('DENIED');
           } else {
             setLocationStatus('UNAVAILABLE');
           }
-          resolve(null);
+          resolve(latestLocationRef.current);
         },
         {
           enableHighAccuracy: true,
-          timeout: 10000,
-          maximumAge: 15000
+          timeout: 6000,
+          maximumAge: 10000
         }
       );
     });
   }, []);
 
   // Dispatch SOS Emergency Event to Backend API (Single Execution Guaranteed)
-  const dispatchSOS = useCallback(async (currentIncidentId: string, currentLoc: DriverLocation | null) => {
+  const dispatchSOS = useCallback(async (currentIncidentId: string, currentLoc?: DriverLocation | null) => {
     if (isDispatchingRef.current || hasDispatchedIncidentRef.current === currentIncidentId) {
       return;
     }
@@ -151,12 +159,17 @@ export function useAccidentSOS(options: UseAccidentSOSOptions) {
     hasDispatchedIncidentRef.current = currentIncidentId;
 
     try {
-      console.log(`[AccidentSOS] Dispatching automatic accident SOS for incident: ${currentIncidentId}...`);
+      let loc = currentLoc || latestLocationRef.current;
+      if (!loc) {
+        loc = await acquireLocation();
+      }
+
+      console.log(`[Road Safety SOS] Dispatching camera-blocked SOS for incident: ${currentIncidentId}...`, loc);
       const payload = {
         userId,
-        latitude: currentLoc?.latitude ?? null as any,
-        longitude: currentLoc?.longitude ?? null as any,
-        accuracy: currentLoc?.accuracy ?? null as any,
+        latitude: loc?.latitude ?? null as any,
+        longitude: loc?.longitude ?? null as any,
+        accuracy: loc?.accuracy ?? null as any,
         incidentId: currentIncidentId,
         timestamp: new Date().toISOString(),
         eventType: 'CAMERA_OBSTRUCTION_ACCIDENT'
@@ -168,14 +181,15 @@ export function useAccidentSOS(options: UseAccidentSOSOptions) {
       }
       setAccidentState('SOS_SENT');
       playUrgentBuzzer(1200, 0.6);
-      speakAlert('Emergency SOS dispatched. Emergency contacts have been notified with your location.');
+      speakAlert('Emergency SOS dispatched. Emergency contacts have been notified with your live location.');
+      console.log('[Road Safety SOS] SOS success confirmed by backend:', res.data);
     } catch (err) {
-      console.error('[AccidentSOS] SOS dispatch error:', err);
+      console.error('[Road Safety SOS] SOS dispatch error:', err);
       setAccidentState('SOS_SENT');
     } finally {
       isDispatchingRef.current = false;
     }
-  }, [userId, playUrgentBuzzer, speakAlert]);
+  }, [userId, acquireLocation, playUrgentBuzzer, speakAlert]);
 
   // Cancel Accident Alert / False Positive Confirmation
   const cancelSOS = useCallback(async () => {
@@ -188,7 +202,7 @@ export function useAccidentSOS(options: UseAccidentSOSOptions) {
       window.speechSynthesis.cancel();
     }
 
-    const currentInc = incidentId;
+    const currentInc = incidentIdRef.current || incidentId;
     setAccidentState('CANCELLED');
     obstructionStartTimeRef.current = null;
 
@@ -214,7 +228,7 @@ export function useAccidentSOS(options: UseAccidentSOSOptions) {
     const newIncId = `man_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     setIncidentId(newIncId);
     setAccidentState('SOS_COUNTDOWN');
-    setCountdownSeconds(5); // Rapid 5s countdown for manual intent
+    setCountdownSeconds(5);
     const loc = await acquireLocation();
     dispatchSOS(newIncId, loc);
   }, [initAudio, acquireLocation, dispatchSOS]);
@@ -242,7 +256,7 @@ export function useAccidentSOS(options: UseAccidentSOSOptions) {
           setCountdownSeconds(15);
           obstructionStartTimeRef.current = null;
 
-          // Start parallel GPS acquisition immediately
+          // Start GPS acquisition immediately
           acquireLocation();
 
           // Audio & Voice warning
@@ -261,6 +275,8 @@ export function useAccidentSOS(options: UseAccidentSOSOptions) {
   // 15-Second Countdown Timer Engine
   useEffect(() => {
     if (accidentState === 'SOS_COUNTDOWN') {
+      if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+
       countdownIntervalRef.current = setInterval(() => {
         setCountdownSeconds((prev) => {
           if (prev <= 1) {
@@ -268,9 +284,9 @@ export function useAccidentSOS(options: UseAccidentSOSOptions) {
               clearInterval(countdownIntervalRef.current);
               countdownIntervalRef.current = null;
             }
-            // Execute automatic SOS dispatch when countdown reaches 0
-            if (incidentId) {
-              dispatchSOS(incidentId, location);
+            const activeInc = incidentIdRef.current;
+            if (activeInc) {
+              dispatchSOS(activeInc, latestLocationRef.current);
             }
             return 0;
           }
@@ -296,7 +312,7 @@ export function useAccidentSOS(options: UseAccidentSOSOptions) {
         countdownIntervalRef.current = null;
       }
     };
-  }, [accidentState, incidentId, location, dispatchSOS, playUrgentBuzzer]);
+  }, [accidentState, dispatchSOS, playUrgentBuzzer]);
 
   return {
     accidentState,
