@@ -49,9 +49,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen = false, onClose }) => 
         />
       )}
 
-      {/* Sidebar Container */}
+      {/* Mobile Sidebar Drawer (Desktop navigation is now in TopNavigation bar) */}
       <aside
-        className={`fixed top-0 left-0 z-40 h-full w-72 bg-white border-r border-slate-200 flex flex-col justify-between transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:h-[calc(100vh-65px)] ${
+        className={`fixed top-0 left-0 z-50 h-full w-72 bg-white border-r border-slate-200 flex flex-col justify-between transition-transform duration-300 ease-in-out lg:hidden shadow-2xl ${
           isOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
