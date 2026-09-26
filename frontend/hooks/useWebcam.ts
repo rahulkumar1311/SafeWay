@@ -32,7 +32,7 @@ export interface UseWebcamOptions {
 
 export function useWebcam(options: UseWebcamOptions = {}) {
   const {
-    fps = 1, // Default 1 FPS for AI sampling to prevent lag while keeping video preview smooth
+    fps = 5, // 5 FPS for responsive, real-time AI inference
     jpegQuality = 0.5,
     targetWidth = 480,
     targetHeight = 360,
@@ -542,7 +542,7 @@ export function useWebcam(options: UseWebcamOptions = {}) {
     let intervalId: NodeJS.Timeout | null = null;
 
     if (cameraStatus === 'CAMERA_ACTIVE') {
-      const intervalMs = Math.max(300, Math.round(1000 / fps));
+      const intervalMs = Math.max(150, Math.round(1000 / fps));
       intervalId = setInterval(async () => {
         if (isProcessingRef.current) return;
 

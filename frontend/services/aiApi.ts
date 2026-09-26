@@ -13,6 +13,16 @@ export const aiApi = {
   },
 
   /**
+   * Predict drowsiness helper (accepts base64 or session+base64)
+   */
+  predictDrowsiness: async (frameData: string, sessionId: string = 'dashboard_session'): Promise<ApiResponse<DrowsinessAnalysisResult>> => {
+    return apiClient.post('/ai/drowsiness/analyze', {
+      sessionId,
+      frameData
+    });
+  },
+
+  /**
    * Analyze image snapshot for traffic sign recognition
    */
   analyzeTrafficSign: async (imageData: string): Promise<ApiResponse<TrafficSignAnalysisResult>> => {

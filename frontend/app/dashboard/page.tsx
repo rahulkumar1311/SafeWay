@@ -175,6 +175,7 @@ export default function DashboardPage() {
   const sosSentRef = useRef<boolean>(false);
   const sosCancelledRef = useRef<boolean>(false);
   const activeEmergencyIdRef = useRef<string | null>(null);
+  const isDrowsyRef = useRef<boolean>(false);
 
   // Dispatch SOS to emergency contacts with live GPS coordinates
   const dispatchAutoSOS = useCallback(async (eventId: string) => {
@@ -255,7 +256,7 @@ export default function DashboardPage() {
 
   // Trigger Automatic SOS countdown when vehicle is confirmed STOPPED on shoulder
   const handleVehicleStopped = useCallback(() => {
-    if (!drowsinessTelemetry.isDrowsy) return;
+    if (!isDrowsyRef.current && !drowsinessTelemetry.isDrowsy && !isAlarmTriggeredRef.current) return;
     if (sosSentRef.current || sosCancelledRef.current || sosCountdown !== null) return;
 
     const eventId = `sos_auto_${Date.now()}`;
@@ -317,10 +318,10 @@ export default function DashboardPage() {
     startCamera,
     stopCamera
   } = useWebcam({
-    targetFps: 15,
+    fps: 5,
     onFrame: async (base64Image) => {
       try {
-        const res = await aiApi.predictDrowsiness(base64Image);
+        const res = await aiApi.analyzeDrowsiness('dashboard_session', base64Image);
         const data = res.data;
         if (!data) return;
 
@@ -380,12 +381,16 @@ export default function DashboardPage() {
           }
         }
 
+        isDrowsyRef.current = isDrowsy;
+
         // Diagnostic Logging (throttled to 1.5 seconds)
         if (now - lastLogTimeRef.current > 1500) {
           lastLogTimeRef.current = now;
           console.log(
-            `[Dashboard Drowsiness] Face: ${faceDetected} | EAR: ${ear?.toFixed(2) ?? 'N/A'} | ` +
-            `Eye: ${eyeState} | Closure: ${(durationMs / 1000).toFixed(1)}s | Drowsy: ${isDrowsy} | Alarm: ${isAlarmTriggeredRef.current ? 'ON' : 'OFF'}`
+            `[Drowsiness Pipeline] EAR: ${ear?.toFixed(2) ?? 'N/A'} | EYE_STATE: ${eyeState} | ` +
+            `CLOSURE_TIME: ${(durationMs / 1000).toFixed(1)}s | IS_DROWSY: ${isDrowsy} | ` +
+            `EMERGENCY_STATE: ${isDrowsy ? 'PULLING_OVER' : 'NORMAL'} | VEHICLE_SPEED: ${manualSpeedKmH} | ` +
+            `SOS_COUNTDOWN: ${sosCountdown ?? '--'} | SOS_STATE: ${sosStatus?.type ?? 'IDLE'}`
           );
         }
 
@@ -406,7 +411,7 @@ export default function DashboardPage() {
           frameHeight: data.frameHeight || 360
         });
       } catch (err) {
-        // AI API fallback
+        console.warn('[Dashboard Drowsiness AI] Inference error:', err);
       }
     }
   });
