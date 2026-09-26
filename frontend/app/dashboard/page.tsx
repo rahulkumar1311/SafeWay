@@ -39,6 +39,39 @@ export default function DashboardPage() {
     heading: gpsState.heading || 0
   });
 
+  // Driver Drowsiness & Spatial Eye Tracking Telemetry State
+  const [drowsinessTelemetry, setDrowsinessTelemetry] = useState<{
+    score: number | null;
+    isDrowsy: boolean;
+    alertState: 'NORMAL' | 'WARNING' | 'DROWSY' | 'ALERT';
+    faceDetected: boolean;
+    ear: number | null;
+    leftEAR: number | null;
+    rightEAR: number | null;
+    eyeState: string;
+    closureDurationMs: number;
+    faceRect: [number, number, number, number] | number[] | null;
+    leftEyeCenter: [number, number] | number[] | null;
+    rightEyeCenter: [number, number] | number[] | null;
+    frameWidth: number;
+    frameHeight: number;
+  }>({
+    score: 12,
+    isDrowsy: false,
+    alertState: 'NORMAL',
+    faceDetected: true,
+    ear: 0.28,
+    leftEAR: 0.29,
+    rightEAR: 0.28,
+    eyeState: 'OPEN',
+    closureDurationMs: 0,
+    faceRect: null,
+    leftEyeCenter: null,
+    rightEyeCenter: null,
+    frameWidth: 480,
+    frameHeight: 360
+  });
+
   // 3. Real Webcam & DroidCam Camera Source Hook
   const {
     videoRef,
@@ -51,16 +84,28 @@ export default function DashboardPage() {
     startCamera,
     stopCamera
   } = useWebcam({
-    fps: 2,
+    fps: 3,
     jpegQuality: 0.5,
     onFrame: async (base64Frame) => {
       try {
         const res = await aiApi.analyzeDrowsiness('cockpit_session_101', base64Frame);
         if (res && res.success && res.data) {
+          const d = res.data;
           setDrowsinessTelemetry({
-            score: res.data.drowsinessScore,
-            isDrowsy: res.data.isDrowsy,
-            alertState: (res.data.alertState as any) || 'NORMAL'
+            score: d.drowsinessScore,
+            isDrowsy: d.isDrowsy,
+            alertState: (d.alertState as any) || 'NORMAL',
+            faceDetected: Boolean(d.faceDetected),
+            ear: d.ear ?? null,
+            leftEAR: d.leftEAR ?? null,
+            rightEAR: d.rightEAR ?? null,
+            eyeState: d.eyeState || 'OPEN',
+            closureDurationMs: d.eyeClosureDurationMs || 0,
+            faceRect: (d.faceRect as any) || null,
+            leftEyeCenter: (d.leftEyeCenter as any) || null,
+            rightEyeCenter: (d.rightEyeCenter as any) || null,
+            frameWidth: d.frameWidth || 480,
+            frameHeight: d.frameHeight || 360
           });
         }
       } catch (err) {
@@ -96,17 +141,6 @@ export default function DashboardPage() {
   const [advisorySpeed, setAdvisorySpeed] = useState<number | null>(null);
   const [activeEvent, setActiveEvent] = useState<CockpitRoadEvent | null>(null);
   const [aiOnline] = useState<boolean>(true);
-
-  // Driver Drowsiness Telemetry State
-  const [drowsinessTelemetry, setDrowsinessTelemetry] = useState<{
-    score: number | null;
-    isDrowsy: boolean;
-    alertState: 'NORMAL' | 'WARNING' | 'DROWSY' | 'ALERT';
-  }>({
-    score: 12,
-    isDrowsy: false,
-    alertState: 'NORMAL'
-  });
 
   // Manual Vehicle Driving Speed State
   const [manualSpeedKmH, setManualSpeedKmH] = useState<number>(0);
@@ -213,7 +247,7 @@ export default function DashboardPage() {
 
         {/* RIGHT COLUMN (1/3): Floating Road Camera Preview + Driver Monitor + V2V */}
         <div className="space-y-6">
-          {/* Floating Road Camera HUD */}
+          {/* Floating Road Camera HUD with Live AI Eye Tracking & Driver Perception Overlay */}
           <CockpitCameraHUD
             videoRef={videoRef}
             canvasRef={canvasRef}
@@ -225,14 +259,15 @@ export default function DashboardPage() {
             onStartCamera={startCamera}
             onStopCamera={stopCamera}
             detectedCount={detected3DObjects.length}
+            trackingData={drowsinessTelemetry}
           />
 
           {/* Driver Attentiveness Monitor HUD */}
           <CockpitDriverMonitorHUD
-            isFaceDetected={cameraStatus === 'CAMERA_ACTIVE'}
-            isEyesOpen={!drowsinessTelemetry.isDrowsy}
-            earValue={drowsinessTelemetry.isDrowsy ? 0.16 : 0.28}
-            eyeClosureDurationSeconds={drowsinessTelemetry.isDrowsy ? 2.4 : 0.0}
+            isFaceDetected={cameraStatus === 'CAMERA_ACTIVE' && drowsinessTelemetry.faceDetected}
+            isEyesOpen={drowsinessTelemetry.eyeState === 'OPEN'}
+            earValue={drowsinessTelemetry.ear}
+            eyeClosureDurationSeconds={drowsinessTelemetry.closureDurationMs / 1000}
             drowsinessScore={drowsinessTelemetry.score}
             alertState={drowsinessTelemetry.alertState}
           />
