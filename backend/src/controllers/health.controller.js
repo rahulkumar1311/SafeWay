@@ -42,11 +42,21 @@ export const getHealthStatus = asyncHandler(async (req, res) => {
 
   return res.status(200).json({
     success: true,
-    message: 'SafeWay-AI backend is running',
+    message: 'SafeWay-AI Backend API is running',
+    version: '1.0.0',
     database: dbStatus,
     aiService: aiStatus,
     aiServiceReason: aiReason,
-    aiServiceUrl: config.aiServiceBaseUrl
+    aiServiceUrl: config.aiServiceBaseUrl,
+    endpoints: {
+      health: '/api/health',
+      trafficRules: '/api/traffic-rules',
+      challans: '/api/challans',
+      hazards: '/api/hazards',
+      safety: '/api/safety',
+      emergency: '/api/emergency',
+      ai: '/api/ai'
+    }
   });
 });
 
