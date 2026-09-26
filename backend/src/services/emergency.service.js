@@ -172,8 +172,8 @@ export const processSOS = async (sosData = {}) => {
     .select('-__v')
     .lean();
 
-  // Fallback: If no contacts found for specific userId, query all emergency contacts in DB
-  if (contacts.length === 0) {
+  // Fallback: If no contacts found for default demo user, query all emergency contacts in DB
+  if (contacts.length === 0 && cleanUserId === 'default_user') {
     contacts = await EmergencyContact.find({})
       .select('-__v')
       .lean();

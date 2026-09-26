@@ -43,3 +43,5 @@ dist/
 # Local database data
 backend/data/
 mongodb_data/
+.mongo_data/
+
