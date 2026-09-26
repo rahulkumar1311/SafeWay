@@ -4,3 +4,9 @@ node_modules/
 *.log
 scratch/
 .DS_Store
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+

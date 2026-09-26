@@ -1,0 +1,16 @@
+# Python Cache Files & Bytecode
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual Environments
+venv/
+.venv/
+env/
+
+# Pytest & Cache
+.pytest_cache/
+.coverage
+
+# Environment Secrets
+.env
