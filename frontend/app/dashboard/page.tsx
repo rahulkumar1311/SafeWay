@@ -447,7 +447,7 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* LEFT & CENTER COLUMN (2/3): 3D WebGL Vehicle Canvas + Dynamic Speed HUD */}
         <div className="lg:col-span-2 space-y-6">
-          {/* 3D WebGL Vehicle & Safety Radar Canvas */}
+          {/* 3D WebGL Vehicle & Safety Radar Canvas with Emergency Pull-Over Behavior */}
           <Cockpit3DVehicleView
             heading={gpsState.heading || 0}
             speedKmH={activeDisplaySpeed}
@@ -455,6 +455,8 @@ export default function DashboardPage() {
             detectedObjects={detected3DObjects}
             nearbyV2VVehicles={nearbyVehicles}
             threatLevel={riskLevel === 'HIGH' ? 'CRITICAL' : riskLevel === 'MEDIUM' ? 'WARNING' : 'SAFE'}
+            isDrowsy={drowsinessTelemetry.isDrowsy}
+            emergencyPullOver={drowsinessTelemetry.isDrowsy || riskLevel === 'HIGH'}
           />
 
           {/* Central Speed Advisory HUD */}
