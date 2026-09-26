@@ -9,4 +9,8 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
+.next/
+*.tsbuildinfo
+backend/data/
+
 
