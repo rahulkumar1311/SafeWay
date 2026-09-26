@@ -17,23 +17,55 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar }) => {
     try {
       setBackendStatus('checking');
       const apiHost = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
-      const res = await fetch(`${apiHost}/health`);
+      
+      // Check Node Express Backend API
+      const res = await fetch(`${apiHost}`).catch(() => fetch(`${apiHost}/health`));
 
-      if (res.ok) {
+      if (res && res.ok) {
         const data = await res.json();
         setBackendStatus('connected');
-        const isOnline = data.aiService === 'online';
+        
+        // Check if AI service is online from backend response or direct AI health check
+        let isOnline = data.aiService === 'online' || data.status === 'online' || data.status === 'healthy';
+        
+        if (!isOnline) {
+          try {
+            const aiRes = await fetch('http://localhost:8000/health', { signal: AbortSignal.timeout(1200) });
+            if (aiRes.ok) isOnline = true;
+          } catch {
+            // Keep current status
+          }
+        }
+
         setAiServiceStatus(isOnline ? 'online' : 'offline');
-        setAiReason(data.aiServiceReason || (isOnline ? 'Service Connected' : 'Python AI service unreachable'));
+        setAiReason(data.aiServiceReason || (isOnline ? 'Python MediaPipe AI Microservice Connected' : 'Python AI service unreachable'));
       } else {
-        setBackendStatus('offline');
-        setAiServiceStatus('offline');
-        setAiReason(`Node Backend returned HTTP ${res.status}`);
+        // Direct Python AI check fallback
+        let aiDirect = false;
+        try {
+          const aiRes = await fetch('http://localhost:8000/health', { signal: AbortSignal.timeout(1200) });
+          if (aiRes.ok) aiDirect = true;
+        } catch {
+          aiDirect = false;
+        }
+
+        setBackendStatus(res?.ok ? 'connected' : 'offline');
+        setAiServiceStatus(aiDirect ? 'online' : 'offline');
+        setAiReason(aiDirect ? 'Python AI service Online' : 'Node Backend unreachable on localhost:5000');
       }
     } catch (err: any) {
+      // Direct Python AI check
+      let aiDirect = false;
+      try {
+        const aiRes = await fetch('http://localhost:8000/health', { signal: AbortSignal.timeout(1200) });
+        if (aiRes.ok) aiDirect = true;
+      } catch {
+        aiDirect = false;
+      }
+
       setBackendStatus('offline');
-      setAiServiceStatus('offline');
-      setAiReason('Node Express Backend unreachable on localhost:5000');
+      setAiServiceStatus(aiDirect ? 'online' : 'offline');
+      setAiReason(aiDirect ? 'Python AI service Online' : 'Node Express Backend unreachable on localhost:5000');
     }
   };
 
@@ -47,7 +79,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar }) => {
 
   return (
     <header className="sticky top-0 z-40 w-full bg-white/95 backdrop-blur-md px-4 sm:px-6 py-3 border-b border-slate-200 shadow-sm">
-      <div className="flex items-center justify-between max-w-7xl mx-auto">
+      <div className="flex items-center justify-between max-w-[1600px] mx-auto">
         {/* Brand Logo Section */}
         <div className="flex items-center gap-3">
           <button
