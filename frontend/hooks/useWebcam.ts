@@ -10,7 +10,7 @@ export type CameraStatus =
   | 'USB_MOBILE_CAMERA_NOT_DETECTED'
   | 'USB_MOBILE_CAMERA_DISCONNECTED';
 
-export type CameraSourceType = 'LAPTOP_CAMERA' | 'USB_MOBILE_CAMERA';
+export type CameraSourceType = 'LAPTOP_CAMERA' | 'USB_MOBILE_CAMERA' | 'IP_STREAM';
 export type CameraRoleType = 'DRIVER_CAMERA' | 'ROAD_CAMERA';
 
 export interface ActiveTrackInfo {
@@ -40,6 +40,7 @@ export function useWebcam(options: UseWebcamOptions = {}) {
   } = options;
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const imgStreamRef = useRef<HTMLImageElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const offscreenCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -48,6 +49,7 @@ export function useWebcam(options: UseWebcamOptions = {}) {
   const [cameraStatus, setCameraStatus] = useState<CameraStatus>('CAMERA_PERMISSION_REQUIRED');
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [stream, setStream] = useState<MediaStream | null>(null);
+  const [ipStreamUrl, setIpStreamUrl] = useState<string>('http://192.168.1.100:4747/video');
 
   const [cameraSource, setCameraSource] = useState<CameraSourceType>('LAPTOP_CAMERA');
   const [cameraRole, setCameraRole] = useState<CameraRoleType>('DRIVER_CAMERA');
@@ -62,15 +64,29 @@ export function useWebcam(options: UseWebcamOptions = {}) {
     onFrameRef.current = onFrame;
   }, [onFrame]);
 
-  // Clean device scanning without opening/stopping temporary media streams
+  // Clean device scanning: enumerates all videoinput devices with label discovery
   const scanDevices = useCallback(async (): Promise<MediaDeviceInfo[]> => {
     if (typeof window === 'undefined' || !navigator.mediaDevices?.enumerateDevices) return [];
     try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const videoInputs = devices.filter((d) => d.kind === 'videoinput');
-      setVideoDevices(videoInputs);
-      console.log('[Camera] Enumerate video devices:', videoInputs.map((d) => ({ id: d.deviceId, label: d.label || 'Webcam' })));
+      let devices = await navigator.mediaDevices.enumerateDevices();
+      let videoInputs = devices.filter((d) => d.kind === 'videoinput');
 
+      // If device labels are empty (camera permission not yet requested in browser session),
+      // briefly request a lightweight user media stream to populate device labels accurately.
+      if (videoInputs.length > 0 && videoInputs.every((d) => !d.label)) {
+        try {
+          const tempStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+          tempStream.getTracks().forEach((t) => t.stop());
+          devices = await navigator.mediaDevices.enumerateDevices();
+          videoInputs = devices.filter((d) => d.kind === 'videoinput');
+        } catch {
+          // Permissions will be requested on startCamera
+        }
+      }
+
+      setVideoDevices(videoInputs);
+
+      // Detect USB/DroidCam/External Camera
       const usbDev = videoInputs.find((d) => {
         const label = (d.label || '').toLowerCase();
         return (
@@ -99,24 +115,30 @@ export function useWebcam(options: UseWebcamOptions = {}) {
 
   // Centralized, idempotent stopCamera cleanup function
   const stopCamera = useCallback(() => {
-    console.log('[Camera] Stopping MediaStream tracks and releasing camera...');
     isProcessingRef.current = false;
 
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => {
-        console.log('[Camera] Stopping track:', track.label);
-        track.stop();
+        try {
+          track.stop();
+        } catch {}
       });
       streamRef.current = null;
     }
 
     if (stream) {
-      stream.getTracks().forEach((track) => track.stop());
+      stream.getTracks().forEach((track) => {
+        try {
+          track.stop();
+        } catch {}
+      });
       setStream(null);
     }
 
     if (videoRef.current) {
-      videoRef.current.pause();
+      try {
+        videoRef.current.pause();
+      } catch {}
       videoRef.current.srcObject = null;
     }
 
@@ -131,14 +153,27 @@ export function useWebcam(options: UseWebcamOptions = {}) {
     setCameraStatus('CAMERA_PERMISSION_REQUIRED');
   }, [stream]);
 
-  // Main start/switch camera handler with 3-tier robust constraint cascade
+  // Main start/switch camera handler with exact device matching & candidate fallback tiers
   const startCameraWithDevice = useCallback(
     async (targetSource?: CameraSourceType, targetDeviceIdOverride?: string) => {
       const activeSource = targetSource || cameraSource;
       try {
-        if (streamRef.current || stream) {
-          stopCamera();
+        // 1. Fully release any existing active camera stream before requesting a new one
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach((track) => {
+            try {
+              track.stop();
+            } catch {}
+          });
+          streamRef.current = null;
         }
+        if (videoRef.current) {
+          try {
+            videoRef.current.pause();
+          } catch {}
+          videoRef.current.srcObject = null;
+        }
+        setStream(null);
 
         setErrorMessage('');
         setCameraStatus('CAMERA_STARTING');
@@ -158,12 +193,63 @@ export function useWebcam(options: UseWebcamOptions = {}) {
           return;
         }
 
-        const inputs = await scanDevices();
+        // Scan for available devices
+        let inputs = await scanDevices();
+
+        // If inputs is empty or devices have no labels, prompt for a brief getUserMedia stream
+        if (inputs.length === 0 || inputs.every((d) => !d.label)) {
+          try {
+            const probeStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+            probeStream.getTracks().forEach((t) => t.stop());
+            inputs = await scanDevices();
+          } catch (probeErr) {
+            console.warn('[Drowsiness Camera] Permission probe note:', probeErr);
+          }
+        }
+
+        console.log(`[Drowsiness Camera] Available cameras (${inputs.length}):`);
+        inputs.forEach((d, idx) => {
+          console.log(`  [${idx}] "${d.label}" (id: ${d.deviceId})`);
+        });
 
         let chosenDeviceId = targetDeviceIdOverride !== undefined ? targetDeviceIdOverride : selectedDeviceId;
+        let candidateDevices: MediaDeviceInfo[] = [];
 
-        if (activeSource === 'USB_MOBILE_CAMERA') {
-          const usbDev = inputs.find((d) => {
+        if (activeSource === 'LAPTOP_CAMERA') {
+          // Identify laptop/integrated camera vs DroidCam
+          const laptopDevs = inputs.filter((d) => {
+            const label = (d.label || '').toLowerCase();
+            return (
+              label.includes('integrated') ||
+              label.includes('built-in') ||
+              label.includes('facetime') ||
+              label.includes('internal') ||
+              label.includes('laptop') ||
+              label.includes('hd user facing') ||
+              label.includes('hd webcam') ||
+              label.includes('hd camera') ||
+              (label.includes('webcam') && !label.includes('droidcam') && !label.includes('iriun') && !label.includes('obs'))
+            );
+          });
+
+          const nonDroidDevs = inputs.filter((d) => {
+            const label = (d.label || '').toLowerCase();
+            return label.length > 0 && !label.includes('droidcam') && !label.includes('iriun') && !label.includes('obs') && !label.includes('virtual');
+          });
+
+          candidateDevices = [...laptopDevs, ...nonDroidDevs];
+
+          if (chosenDeviceId) {
+            const matchingDev = inputs.find((d) => d.deviceId === chosenDeviceId);
+            if (matchingDev) candidateDevices.unshift(matchingDev);
+          }
+          if (candidateDevices.length > 0) {
+            chosenDeviceId = candidateDevices[0].deviceId;
+            setSelectedDeviceId(chosenDeviceId);
+          }
+        } else if (activeSource === 'USB_MOBILE_CAMERA') {
+          // Find all matching DroidCam / USB phone video candidates
+          const droidCamDevs = inputs.filter((d) => {
             const label = (d.label || '').toLowerCase();
             return (
               label.includes('droidcam') ||
@@ -172,107 +258,105 @@ export function useWebcam(options: UseWebcamOptions = {}) {
               label.includes('android') ||
               label.includes('phone') ||
               label.includes('external') ||
+              label.includes('source') ||
               label.includes('iriun') ||
               label.includes('uvc') ||
               label.includes('obs')
             );
-          }) || (inputs.length > 1 ? inputs[1] : null);
+          });
+
+          candidateDevices = droidCamDevs.length > 0 ? droidCamDevs : inputs.filter((d) => !(d.label || '').toLowerCase().includes('integrated'));
 
           if (chosenDeviceId) {
+            const matchingDev = inputs.find((d) => d.deviceId === chosenDeviceId);
+            if (matchingDev) candidateDevices.unshift(matchingDev);
+          }
+
+          if (candidateDevices.length > 0) {
+            chosenDeviceId = candidateDevices[0].deviceId;
             setSelectedDeviceId(chosenDeviceId);
-          } else if (usbDev && usbDev.deviceId) {
-            chosenDeviceId = usbDev.deviceId;
-            setSelectedDeviceId(usbDev.deviceId);
           } else {
-            console.warn('[Camera] USB Mobile Camera requested, but no USB/phone webcam device found.');
             setCameraStatus('USB_MOBILE_CAMERA_NOT_DETECTED');
-            setErrorMessage('USB MOBILE CAMERA NOT DETECTED: Ensure DroidCam is active, or switch to Laptop Cam.');
+            setErrorMessage('DroidCam USB camera detected but no matching video device was found. Please ensure DroidCam Client is running.');
             return;
-          }
-        } else {
-          // Integrated Laptop Camera logic: Find laptop/built-in device or non-DroidCam input
-          const laptopDev =
-            inputs.find((d) => {
-              const label = (d.label || '').toLowerCase();
-              return (
-                label.includes('integrated') ||
-                label.includes('built-in') ||
-                label.includes('facetime') ||
-                label.includes('internal') ||
-                label.includes('laptop') ||
-                label.includes('hd camera') ||
-                (label.includes('webcam') && !label.includes('droidcam'))
-              );
-            }) ||
-            inputs.find((d) => {
-              const label = (d.label || '').toLowerCase();
-              return !label.includes('droidcam') && !label.includes('iriun') && !label.includes('obs');
-            }) ||
-            inputs[0];
-
-          if (!chosenDeviceId && laptopDev?.deviceId) {
-            chosenDeviceId = laptopDev.deviceId;
-          }
-          if (chosenDeviceId) {
-            setSelectedDeviceId(chosenDeviceId);
           }
         }
 
-        console.log(`[Camera] Requesting getUserMedia for '${activeSource}' deviceId: '${chosenDeviceId}'`);
+        console.log(`[Drowsiness Camera] Target Source: ${activeSource} | Initial candidate: '${chosenDeviceId || 'system default'}'`);
 
         let newStream: MediaStream | null = null;
-        let primaryErr: any = null;
+        let lastError: any = null;
 
-        // Tier 1: Ideal device selection with target dimensions
-        try {
-          const tier1Constraints: MediaStreamConstraints = {
-            video: chosenDeviceId
-              ? { deviceId: { ideal: chosenDeviceId }, width: { ideal: targetWidth }, height: { ideal: targetHeight } }
-              : { facingMode: 'user', width: { ideal: targetWidth }, height: { ideal: targetHeight } },
-            audio: false
-          };
-          newStream = await navigator.mediaDevices.getUserMedia(tier1Constraints);
-        } catch (e1) {
-          primaryErr = e1;
-          console.warn('[Camera] Tier 1 constraint failed, attempting Tier 2 (deviceId without resolution):', e1);
-          // Tier 2: Device ID or facingMode without strict resolution limits
+        // Try candidate devices sequentially until one produces a live stream
+        for (const candidate of candidateDevices) {
           try {
-            const tier2Constraints: MediaStreamConstraints = {
-              video: chosenDeviceId ? { deviceId: { ideal: chosenDeviceId } } : { facingMode: 'user' },
+            console.log(`[Drowsiness Camera] Attempting to open device: "${candidate.label}" (${candidate.deviceId})`);
+            const constraints: MediaStreamConstraints = {
+              video: {
+                deviceId: { exact: candidate.deviceId },
+                width: { ideal: targetWidth },
+                height: { ideal: targetHeight }
+              },
               audio: false
             };
-            newStream = await navigator.mediaDevices.getUserMedia(tier2Constraints);
-          } catch (e2) {
-            console.warn('[Camera] Tier 2 constraint failed, attempting Tier 3 ({ video: true } universal fallback):', e2);
-            // Tier 3: Universal WebRTC fallback (always opens system default laptop camera)
-            try {
-              newStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-            } catch (e3: any) {
-              console.error('[Camera] All getUserMedia fallback tiers failed:', e3);
-              const errName = e3?.name || primaryErr?.name || 'UnknownError';
-              const errMsg = e3?.message || primaryErr?.message || String(e3);
-
-              if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError') {
-                setCameraStatus('CAMERA_DENIED');
-                setErrorMessage('Camera permission denied. Please enable camera access in browser site settings.');
-              } else if (errName === 'NotReadableError' || errName === 'TrackStartError') {
-                setCameraStatus('CAMERA_ERROR');
-                setErrorMessage('Camera hardware is currently used by another app. Please close other camera tabs/apps.');
-              } else if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
-                setCameraStatus('CAMERA_ERROR');
-                setErrorMessage('No video camera device was detected on your system.');
-              } else {
-                setCameraStatus('CAMERA_ERROR');
-                setErrorMessage(`Unable to access camera (${errName}): ${errMsg}`);
-              }
-              return;
+            const candidateStream = await navigator.mediaDevices.getUserMedia(constraints);
+            const track = candidateStream.getVideoTracks()[0];
+            if (track && track.readyState === 'live') {
+              newStream = candidateStream;
+              chosenDeviceId = candidate.deviceId;
+              setSelectedDeviceId(candidate.deviceId);
+              console.log(`[Drowsiness Camera] Successfully acquired live stream from "${candidate.label}"`);
+              break;
+            } else {
+              candidateStream.getTracks().forEach((t) => t.stop());
             }
+          } catch (candErr) {
+            lastError = candErr;
+            console.warn(`[Drowsiness Camera] Device "${candidate.label}" open attempt note:`, candErr);
+          }
+        }
+
+        // Generic fallback if candidate devices failed
+        if (!newStream) {
+          try {
+            console.log('[Drowsiness Camera] Attempting universal getUserMedia fallback...');
+            const fallbackConstraints: MediaStreamConstraints = {
+              video: {
+                facingMode: activeSource === 'LAPTOP_CAMERA' ? 'user' : undefined,
+                width: { ideal: targetWidth },
+                height: { ideal: targetHeight }
+              },
+              audio: false
+            };
+            newStream = await navigator.mediaDevices.getUserMedia(fallbackConstraints);
+          } catch (eFallback: any) {
+            console.error('[Drowsiness Camera] All getUserMedia tiers failed:', eFallback);
+            const errName = eFallback?.name || lastError?.name || 'UnknownError';
+            const errMsg = eFallback?.message || lastError?.message || String(eFallback);
+
+            if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError') {
+              setCameraStatus('CAMERA_DENIED');
+              setErrorMessage('Camera access was denied. Please allow camera permissions in browser site settings.');
+            } else if (errName === 'NotReadableError' || errName === 'TrackStartError') {
+              setCameraStatus('CAMERA_ERROR');
+              setErrorMessage('Camera hardware is currently in use by another application or tab.');
+            } else if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
+              setCameraStatus('CAMERA_ERROR');
+              setErrorMessage('No video camera device was detected on your system.');
+            } else if (errName === 'OverconstrainedError') {
+              setCameraStatus('CAMERA_ERROR');
+              setErrorMessage('Camera constraints are not supported by the selected device.');
+            } else {
+              setCameraStatus('CAMERA_ERROR');
+              setErrorMessage(`Unable to access camera (${errName}): ${errMsg}`);
+            }
+            return;
           }
         }
 
         if (!newStream) {
           setCameraStatus('CAMERA_ERROR');
-          setErrorMessage('Unable to access camera hardware: null MediaStream returned.');
+          setErrorMessage('Unable to access camera hardware: No media stream returned.');
           return;
         }
 
@@ -285,17 +369,17 @@ export function useWebcam(options: UseWebcamOptions = {}) {
 
         const settings = typeof track.getSettings === 'function' ? track.getSettings() : {};
         const activeDeviceId = settings.deviceId || chosenDeviceId || '';
-        const activeLabel = track.label || (activeSource === 'USB_MOBILE_CAMERA' ? 'USB Mobile Camera' : 'Integrated Laptop Webcam');
+        const activeLabel = track.label || (activeSource === 'USB_MOBILE_CAMERA' ? 'DroidCam Video' : 'Integrated Laptop Webcam');
         const activeWidth = settings.width || targetWidth;
         const activeHeight = settings.height || targetHeight;
         const activeFrameRate = settings.frameRate || 30;
 
         track.onended = () => {
-          console.warn('[Camera] Video track ended/disconnected');
+          console.warn('[Drowsiness Camera] Video track ended/disconnected');
           stopCamera();
           if (activeSource === 'USB_MOBILE_CAMERA') {
             setCameraStatus('USB_MOBILE_CAMERA_DISCONNECTED');
-            setErrorMessage('USB MOBILE CAMERA DISCONNECTED: Phone webcam stream was closed.');
+            setErrorMessage('DroidCam USB camera disconnected: Stream was closed.');
           } else {
             setCameraStatus('CAMERA_ERROR');
             setErrorMessage('Camera stream was disconnected.');
@@ -316,12 +400,35 @@ export function useWebcam(options: UseWebcamOptions = {}) {
           video.setAttribute('autoplay', 'true');
           video.setAttribute('muted', '');
 
+          // Wait until video has received data and readyState is sufficient before marking ACTIVE
+          await new Promise<void>((resolve) => {
+            if (video.readyState >= 1 && video.videoWidth > 0 && video.videoHeight > 0) {
+              resolve();
+              return;
+            }
+            const onReady = () => {
+              video.removeEventListener('loadedmetadata', onReady);
+              video.removeEventListener('playing', onReady);
+              resolve();
+            };
+            video.addEventListener('loadedmetadata', onReady);
+            video.addEventListener('playing', onReady);
+            setTimeout(resolve, 500); // Guard timeout
+          });
+
           try {
             await video.play();
           } catch (playErr) {
-            console.warn('[Camera] video.play() exception note:', playErr);
+            console.warn('[Drowsiness Camera] video.play() note:', playErr);
           }
         }
+
+        const currentReadyState = track.readyState;
+        const videoDimensions = `${videoRef.current?.videoWidth || activeWidth}x${videoRef.current?.videoHeight || activeHeight}`;
+
+        console.log(`[Drowsiness Camera] Selected camera: "${activeLabel}"`);
+        console.log(`[Drowsiness Camera] Track state: ${currentReadyState}`);
+        console.log(`[Drowsiness Camera] Video dimensions: ${videoDimensions}`);
 
         setActiveTrackInfo({
           deviceId: activeDeviceId,
@@ -329,26 +436,47 @@ export function useWebcam(options: UseWebcamOptions = {}) {
           width: activeWidth,
           height: activeHeight,
           frameRate: activeFrameRate,
-          readyState: track.readyState
+          readyState: currentReadyState
         });
 
+        // Set status to ACTIVE now that frames are actually ready
         setCameraStatus('CAMERA_ACTIVE');
 
-        // Refresh enumerated devices now that camera permission is granted
+        // Re-scan devices so all real device labels are refreshed in dropdown
         scanDevices();
       } catch (err: any) {
-        console.error('[Webcam Error]', err);
+        console.error('[Drowsiness Camera Error]', err);
         stopCamera();
         setCameraStatus('CAMERA_ERROR');
-        setErrorMessage('Unable to access camera. Check browser permissions and close any other apps using the camera.');
+        setErrorMessage('Unable to initialize camera. Please check permissions.');
       }
     },
-    [cameraSource, selectedDeviceId, stream, stopCamera, scanDevices, targetWidth, targetHeight]
+    [cameraSource, selectedDeviceId, stopCamera, scanDevices, targetWidth, targetHeight]
   );
 
   const startCamera = useCallback(() => {
     return startCameraWithDevice();
   }, [startCameraWithDevice]);
+
+  // Handle DroidCam / IP Webcam direct stream URL
+  const startIpStream = useCallback(
+    (url: string) => {
+      stopCamera();
+      const validUrl = url.trim() || 'http://192.168.1.100:4747/video';
+      setIpStreamUrl(validUrl);
+      setCameraSource('IP_STREAM');
+      setCameraStatus('CAMERA_ACTIVE');
+      setActiveTrackInfo({
+        deviceId: 'ip-stream',
+        label: `DroidCam WiFi Stream (${validUrl})`,
+        width: targetWidth,
+        height: targetHeight,
+        frameRate: 30,
+        readyState: 'live'
+      });
+    },
+    [stopCamera, targetWidth, targetHeight]
+  );
 
   // Handle camera source switch cleanly
   const changeCameraSource = useCallback(
@@ -356,19 +484,40 @@ export function useWebcam(options: UseWebcamOptions = {}) {
       stopCamera();
       setCameraSource(newSource);
       setSelectedDeviceId('');
-      startCameraWithDevice(newSource, '');
+      if (newSource === 'IP_STREAM') {
+        startIpStream(ipStreamUrl);
+      } else {
+        startCameraWithDevice(newSource, '');
+      }
     },
-    [stopCamera, startCameraWithDevice]
+    [stopCamera, startCameraWithDevice, startIpStream, ipStreamUrl]
   );
 
-  // Handle device ID change cleanly
+  // Handle device ID change cleanly with automatic source alignment
   const changeSelectedDevice = useCallback(
     (deviceId: string) => {
       stopCamera();
       setSelectedDeviceId(deviceId);
-      startCameraWithDevice(cameraSource, deviceId);
+
+      // Determine matching camera source from device label
+      const dev = videoDevices.find((d) => d.deviceId === deviceId);
+      const label = (dev?.label || '').toLowerCase();
+      const isUsb =
+        label.includes('droidcam') ||
+        label.includes('usb') ||
+        label.includes('mobile') ||
+        label.includes('android') ||
+        label.includes('phone') ||
+        label.includes('external') ||
+        label.includes('iriun') ||
+        label.includes('uvc') ||
+        label.includes('obs');
+
+      const matchingSource: CameraSourceType = isUsb ? 'USB_MOBILE_CAMERA' : 'LAPTOP_CAMERA';
+      setCameraSource(matchingSource);
+      startCameraWithDevice(matchingSource, deviceId);
     },
-    [cameraSource, stopCamera, startCameraWithDevice]
+    [videoDevices, stopCamera, startCameraWithDevice]
   );
 
   // Scan devices on mount
@@ -388,27 +537,14 @@ export function useWebcam(options: UseWebcamOptions = {}) {
     };
   }, [scanDevices]);
 
-  // Optimized Ultra-Low Latency AI Frame Sampling Loop with Offscreen Canvas Downscaling
+  // Optimized Ultra-Low Latency AI Frame Sampling Loop for both WebRTC and DroidCam IP Stream
   useEffect(() => {
     let intervalId: NodeJS.Timeout | null = null;
 
     if (cameraStatus === 'CAMERA_ACTIVE') {
       const intervalMs = Math.max(300, Math.round(1000 / fps));
       intervalId = setInterval(async () => {
-        if (!videoRef.current || !streamRef.current) return;
         if (isProcessingRef.current) return;
-
-        const video = videoRef.current;
-
-        if (
-          video.paused ||
-          video.ended ||
-          video.readyState < 2 ||
-          video.videoWidth === 0 ||
-          video.videoHeight === 0
-        ) {
-          return;
-        }
 
         // Initialize reusable offscreen canvas once to avoid DOM canvas allocation lag
         if (!offscreenCanvasRef.current) {
@@ -422,8 +558,35 @@ export function useWebcam(options: UseWebcamOptions = {}) {
         const ctx = offscreen.getContext('2d', { willReadFrequently: true });
         if (!ctx) return;
 
-        // Hardware-accelerated scaling directly into lightweight target dimensions
-        ctx.drawImage(video, 0, 0, targetWidth, targetHeight);
+        if (cameraSource === 'IP_STREAM') {
+          const img = imgStreamRef.current;
+          if (!img || !img.complete || img.naturalWidth === 0) return;
+          try {
+            ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+          } catch {
+            return;
+          }
+        } else {
+          const video = videoRef.current;
+          if (
+            !video ||
+            !streamRef.current ||
+            video.paused ||
+            video.ended ||
+            video.readyState < 2 ||
+            video.videoWidth === 0 ||
+            video.videoHeight === 0
+          ) {
+            return;
+          }
+
+          // Hardware-accelerated scaling directly into lightweight target dimensions
+          try {
+            ctx.drawImage(video, 0, 0, targetWidth, targetHeight);
+          } catch {
+            return;
+          }
+        }
 
         // Fast JPEG encoding on small canvas (< 1ms CPU time, ~15KB string)
         const base64Jpeg = offscreen.toDataURL('image/jpeg', jpegQuality);
@@ -445,7 +608,7 @@ export function useWebcam(options: UseWebcamOptions = {}) {
       if (intervalId) clearInterval(intervalId);
       isProcessingRef.current = false;
     };
-  }, [cameraStatus, fps, jpegQuality, targetWidth, targetHeight]);
+  }, [cameraStatus, cameraSource, fps, jpegQuality, targetWidth, targetHeight]);
 
   // Clean up all tracks on unmount / route navigation
   useEffect(() => {
@@ -461,6 +624,7 @@ export function useWebcam(options: UseWebcamOptions = {}) {
 
   return {
     videoRef,
+    imgStreamRef,
     canvasRef,
     cameraStatus,
     errorMessage,
@@ -474,6 +638,9 @@ export function useWebcam(options: UseWebcamOptions = {}) {
     activeTrackInfo,
     usbCameraDetected,
     usbDeviceLabel,
+    ipStreamUrl,
+    setIpStreamUrl,
+    startIpStream,
     scanDevices,
     startCamera,
     stopCamera
@@ -481,4 +648,3 @@ export function useWebcam(options: UseWebcamOptions = {}) {
 }
 
 export default useWebcam;
-
