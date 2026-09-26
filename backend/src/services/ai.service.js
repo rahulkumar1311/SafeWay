@@ -77,6 +77,14 @@ export const analyzeDrowsinessFrame = async (inputData = {}) => {
       `Face: ${faceDetected} | EAR: ${ear} | State: ${alertState} | Score: ${scoreNum}`
     );
 
+    const faceRect = aiResult.faceRect || null;
+    const leftEye = aiResult.leftEye || null;
+    const rightEye = aiResult.rightEye || null;
+    const leftEyeCenter = aiResult.leftEyeCenter || null;
+    const rightEyeCenter = aiResult.rightEyeCenter || null;
+    const frameWidth = Number(aiResult.frameWidth) || 480;
+    const frameHeight = Number(aiResult.frameHeight) || 360;
+
     return {
       sessionId,
       timestamp: new Date().toISOString(),
@@ -95,6 +103,13 @@ export const analyzeDrowsinessFrame = async (inputData = {}) => {
       alert,
       confidence,
       alertEvent,
+      faceRect,
+      leftEye,
+      rightEye,
+      leftEyeCenter,
+      rightEyeCenter,
+      frameWidth,
+      frameHeight,
       metadata: {
         ear,
         leftEAR,

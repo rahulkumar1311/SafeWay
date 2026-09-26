@@ -99,7 +99,46 @@ class DrowsinessService:
         result["eyeClosureDurationMs"] = closure_duration_ms
         result["riskLevel"] = risk_level
         result["isDrowsy"] = is_drowsy
-        result["alert"] = alert_active
+        # 9. Extract exact or approximate Face & Eye spatial landmarks
+        img_h, img_w = image.shape[:2] if (image is not None and hasattr(image, 'shape')) else (360, 480)
+        face_rect = list(detection_res.get("face_rect", [0, 0, img_w, img_h])) if face_detected else None
+        left_eye_landmarks = detection_res.get("left_eye_landmarks", None)
+        right_eye_landmarks = detection_res.get("right_eye_landmarks", None)
+        eyes = detection_res.get("eyes", [])
+
+        left_eye_center = None
+        right_eye_center = None
+        left_eye_box = None
+        right_eye_box = None
+
+        if face_detected and left_eye_landmarks and right_eye_landmarks:
+            left_eye_center = [
+                round(float(sum(p[0] for p in left_eye_landmarks) / len(left_eye_landmarks)), 1),
+                round(float(sum(p[1] for p in left_eye_landmarks) / len(left_eye_landmarks)), 1)
+            ]
+            right_eye_center = [
+                round(float(sum(p[0] for p in right_eye_landmarks) / len(right_eye_landmarks)), 1),
+                round(float(sum(p[1] for p in right_eye_landmarks) / len(right_eye_landmarks)), 1)
+            ]
+        elif face_detected and len(eyes) >= 2:
+            # Sorted by x-coordinate (left to right)
+            sorted_eyes = sorted(eyes, key=lambda e: e[0])
+            left_eye_box = list(sorted_eyes[0])
+            right_eye_box = list(sorted_eyes[1])
+            left_eye_center = [round(left_eye_box[0] + left_eye_box[2] / 2.0, 1), round(left_eye_box[1] + left_eye_box[3] / 2.0, 1)]
+            right_eye_center = [round(right_eye_box[0] + right_eye_box[2] / 2.0, 1), round(right_eye_box[1] + right_eye_box[3] / 2.0, 1)]
+        elif face_detected and face_rect:
+            fx, fy, fw, fh = face_rect
+            left_eye_center = [round(fx + fw * 0.33, 1), round(fy + fh * 0.38, 1)]
+            right_eye_center = [round(fx + fw * 0.67, 1), round(fy + fh * 0.38, 1)]
+
+        result["faceRect"] = face_rect
+        result["leftEye"] = left_eye_box
+        result["rightEye"] = right_eye_box
+        result["leftEyeCenter"] = left_eye_center
+        result["rightEyeCenter"] = right_eye_center
+        result["frameWidth"] = img_w
+        result["frameHeight"] = img_h
 
         logger.info(
             f"[Python AI] Frame result for session '{session_id}' | Face: {face_detected} | "

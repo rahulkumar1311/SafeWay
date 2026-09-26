@@ -169,6 +169,13 @@ export interface DrowsinessAnalysisResult {
   alert?: boolean;
   alertState?: string;
   alertEvent?: string | null;
+  faceRect?: [number, number, number, number] | number[] | null; // [x, y, w, h]
+  leftEye?: [number, number, number, number] | number[] | null; // [x, y, w, h]
+  rightEye?: [number, number, number, number] | number[] | null; // [x, y, w, h]
+  leftEyeCenter?: [number, number] | number[] | null; // [x, y]
+  rightEyeCenter?: [number, number] | number[] | null; // [x, y]
+  frameWidth?: number;
+  frameHeight?: number;
 }
 
 export interface TrafficSignAnalysisResult {

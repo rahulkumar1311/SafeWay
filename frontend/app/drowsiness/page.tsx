@@ -285,39 +285,518 @@ export default function DrowsinessPage() {
           alertState
         });
 
-        // Overlay visualization on Canvas
-        if (canvasRef.current && videoRef.current) {
-          const canvas = canvasRef.current;
-          const ctx = canvas.getContext('2d');
-          if (ctx) {
-            const w = canvas.width;
-            const h = canvas.height;
-            ctx.clearRect(0, 0, w, h);
+        // Extract normalized spatial coordinates from AI response
+        const fw = data.frameWidth || 480;
+        const fh = data.frameHeight || 360;
 
-            if (faceDetected) {
-              // Draw subtle facial perception guide box
-              ctx.strokeStyle = isDrowsy ? '#ef4444' : durationMs > 0 ? '#f59e0b' : '#0284c7';
-              ctx.lineWidth = 2;
-              ctx.setLineDash([6, 6]);
-              const boxW = Math.round(w * 0.45);
-              const boxH = Math.round(h * 0.55);
-              const boxX = Math.round((w - boxW) / 2);
-              const boxY = Math.round((h - boxH) / 2);
-              ctx.strokeRect(boxX, boxY, boxW, boxH);
-              ctx.setLineDash([]);
+        let fxNorm = 0.25;
+        let fyNorm = 0.2;
+        let fwNorm = 0.5;
+        let fhNorm = 0.6;
+        let lxNorm = 0.4;
+        let lyNorm = 0.42;
+        let rxNorm = 0.6;
+        let ryNorm = 0.42;
+        let hasEyeLandmarks = false;
 
-              // Text overlay for EAR
-              ctx.font = 'bold 12px monospace';
-              ctx.fillStyle = isDrowsy ? '#ef4444' : '#0284c7';
-              ctx.fillText(`EAR: ${ear !== null ? ear.toFixed(2) : '--'} (${eyeState})`, boxX + 6, boxY + 20);
-            }
-          }
+        if (data.faceRect && Array.isArray(data.faceRect) && data.faceRect.length === 4) {
+          const [rx, ry, rw, rh] = data.faceRect;
+          fxNorm = rx / fw;
+          fyNorm = ry / fh;
+          fwNorm = rw / fw;
+          fhNorm = rh / fh;
         }
+
+        if (data.leftEyeCenter && Array.isArray(data.leftEyeCenter) && data.leftEyeCenter.length === 2) {
+          lxNorm = data.leftEyeCenter[0] / fw;
+          lyNorm = data.leftEyeCenter[1] / fh;
+          hasEyeLandmarks = true;
+        } else {
+          lxNorm = fxNorm + fwNorm * 0.32;
+          lyNorm = fyNorm + fhNorm * 0.38;
+        }
+
+        if (data.rightEyeCenter && Array.isArray(data.rightEyeCenter) && data.rightEyeCenter.length === 2) {
+          rxNorm = data.rightEyeCenter[0] / fw;
+          ryNorm = data.rightEyeCenter[1] / fh;
+          hasEyeLandmarks = true;
+        } else {
+          rxNorm = fxNorm + fwNorm * 0.68;
+          ryNorm = fyNorm + fhNorm * 0.38;
+        }
+
+        trackingDataRef.current = {
+          faceDetected,
+          fxNorm,
+          fyNorm,
+          fwNorm,
+          fhNorm,
+          lxNorm,
+          lyNorm,
+          rxNorm,
+          ryNorm,
+          ear,
+          leftEAR,
+          rightEAR,
+          eyeState,
+          closureDurationMs: durationMs,
+          score,
+          isDrowsy,
+          alertState,
+          hasEyeLandmarks
+        };
       } catch (err) {
         // AI stream recovery
       }
     }
   });
+
+  // 4. Stable Reference for 60 FPS Canvas Animation Loop
+  const trackingDataRef = useRef<{
+    faceDetected: boolean;
+    fxNorm: number;
+    fyNorm: number;
+    fwNorm: number;
+    fhNorm: number;
+    lxNorm: number;
+    lyNorm: number;
+    rxNorm: number;
+    ryNorm: number;
+    ear: number | null;
+    leftEAR: number | null;
+    rightEAR: number | null;
+    eyeState: string;
+    closureDurationMs: number;
+    score: number;
+    isDrowsy: boolean;
+    alertState: string;
+    hasEyeLandmarks: boolean;
+  }>({
+    faceDetected: false,
+    fxNorm: 0.25,
+    fyNorm: 0.2,
+    fwNorm: 0.5,
+    fhNorm: 0.6,
+    lxNorm: 0.4,
+    lyNorm: 0.42,
+    rxNorm: 0.6,
+    ryNorm: 0.42,
+    ear: null,
+    leftEAR: null,
+    rightEAR: null,
+    eyeState: 'UNKNOWN',
+    closureDurationMs: 0,
+    score: 0,
+    isDrowsy: false,
+    alertState: 'NORMAL',
+    hasEyeLandmarks: false
+  });
+
+  // 5. Dedicated 60 FPS RequestAnimationFrame Canvas Animation Loop
+  useEffect(() => {
+    if (cameraStatus !== 'CAMERA_ACTIVE') {
+      if (canvasRef.current) {
+        const ctx = canvasRef.current.getContext('2d');
+        if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+      }
+      return;
+    }
+
+    let animId: number;
+    const startTime = performance.now();
+
+    // Smoothed state coordinates for jitter-free interpolation
+    const smooth = {
+      opacity: 0,
+      fx: 0,
+      fy: 0,
+      fw: 0,
+      fh: 0,
+      lx: 0,
+      ly: 0,
+      rx: 0,
+      ry: 0
+    };
+
+    const render = (now: number) => {
+      const elapsed = (now - startTime) / 1000;
+      const canvas = canvasRef.current;
+      if (!canvas) {
+        animId = requestAnimationFrame(render);
+        return;
+      }
+
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      const displayW = rect.width || 640;
+      const displayH = rect.height || 420;
+
+      if (canvas.width !== Math.round(displayW * dpr) || canvas.height !== Math.round(displayH * dpr)) {
+        canvas.width = Math.round(displayW * dpr);
+        canvas.height = Math.round(displayH * dpr);
+      }
+
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        animId = requestAnimationFrame(render);
+        return;
+      }
+
+      ctx.save();
+      ctx.scale(dpr, dpr);
+      ctx.clearRect(0, 0, displayW, displayH);
+
+      const data = trackingDataRef.current;
+      const targetOpacity = data.faceDetected ? 1.0 : 0.0;
+      smooth.opacity += (targetOpacity - smooth.opacity) * 0.15;
+
+      // Convert normalized source coordinates to canvas pixel space
+      const targetFx = data.fxNorm * displayW;
+      const targetFy = data.fyNorm * displayH;
+      const targetFw = Math.max(90, data.fwNorm * displayW);
+      const targetFh = Math.max(110, data.fhNorm * displayH);
+
+      const targetLx = data.lxNorm * displayW;
+      const targetLy = data.lyNorm * displayH;
+      const targetRx = data.rxNorm * displayW;
+      const targetRy = data.ryNorm * displayH;
+
+      // Smooth lerp (alpha = 0.22)
+      smooth.fx += (targetFx - smooth.fx) * 0.22;
+      smooth.fy += (targetFy - smooth.fy) * 0.22;
+      smooth.fw += (targetFw - smooth.fw) * 0.22;
+      smooth.fh += (targetFh - smooth.fh) * 0.22;
+      smooth.lx += (targetLx - smooth.lx) * 0.22;
+      smooth.ly += (targetLy - smooth.ly) * 0.22;
+      smooth.rx += (targetRx - smooth.rx) * 0.22;
+      smooth.ry += (targetRy - smooth.ry) * 0.22;
+
+      const isDrowsy = data.isDrowsy || data.closureDurationMs >= 3000;
+      const isWarning =
+        !isDrowsy &&
+        (data.eyeState === 'CLOSED' ||
+          data.eyeState === 'CLOSING' ||
+          data.closureDurationMs > 0 ||
+          (data.ear !== null && data.ear < 0.22));
+
+      // Dynamic automotive theme palette
+      const mainColor = isDrowsy ? '#EF4444' : isWarning ? '#F59E0B' : '#00AEEF';
+      const glowColor = isDrowsy
+        ? 'rgba(239, 68, 68, 0.45)'
+        : isWarning
+        ? 'rgba(245, 158, 11, 0.4)'
+        : 'rgba(0, 174, 239, 0.35)';
+      const darkBg = 'rgba(15, 23, 42, 0.75)';
+
+      // --- 1. FACE DETECTED (DRAW EYE TRACKING RINGS + CORNERS + SCANNER) ---
+      if (smooth.opacity > 0.05) {
+        ctx.save();
+        ctx.globalAlpha = Math.min(1.0, smooth.opacity);
+
+        const fx = smooth.fx;
+        const fy = smooth.fy;
+        const fw = smooth.fw;
+        const fh = smooth.fh;
+        const lx = smooth.lx;
+        const ly = smooth.ly;
+        const rx = smooth.rx;
+        const ry = smooth.ry;
+
+        // A. Face Corner Brackets (Minimal corner brackets ┌ ┐ └ ┘, NOT solid rectangle)
+        const cornerLen = Math.min(30, fw * 0.22);
+        ctx.strokeStyle = mainColor;
+        ctx.lineWidth = 2.5;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.shadowColor = glowColor;
+        ctx.shadowBlur = 8;
+
+        // Top-Left ┌
+        ctx.beginPath();
+        ctx.moveTo(fx, fy + cornerLen);
+        ctx.lineTo(fx, fy);
+        ctx.lineTo(fx + cornerLen, fy);
+        ctx.stroke();
+
+        // Top-Right ┐
+        ctx.beginPath();
+        ctx.moveTo(fx + fw - cornerLen, fy);
+        ctx.lineTo(fx + fw, fy);
+        ctx.lineTo(fx + fw, fy + cornerLen);
+        ctx.stroke();
+
+        // Bottom-Left └
+        ctx.beginPath();
+        ctx.moveTo(fx, fy + fh - cornerLen);
+        ctx.lineTo(fx, fy + fh);
+        ctx.lineTo(fx + cornerLen, fy + fh);
+        ctx.stroke();
+
+        // Bottom-Right ┘
+        ctx.beginPath();
+        ctx.moveTo(fx + fw - cornerLen, fy + fh);
+        ctx.lineTo(fx + fw, fy + fh);
+        ctx.lineTo(fx + fw, fy + fh - cornerLen);
+        ctx.stroke();
+
+        // B. Subtle AI Vertical Laser Scanning Line
+        const scanPhase = (Math.sin(elapsed * 2.8) + 1) / 2; // 0 to 1
+        const scanY = fy + 12 + scanPhase * (fh - 24);
+
+        const scanGrad = ctx.createLinearGradient(fx, scanY - 8, fx, scanY + 8);
+        scanGrad.addColorStop(0, 'rgba(0, 174, 239, 0.0)');
+        scanGrad.addColorStop(
+          0.5,
+          isDrowsy ? 'rgba(239, 68, 68, 0.35)' : isWarning ? 'rgba(245, 158, 11, 0.3)' : 'rgba(0, 174, 239, 0.25)'
+        );
+        scanGrad.addColorStop(1, 'rgba(0, 174, 239, 0.0)');
+
+        ctx.fillStyle = scanGrad;
+        ctx.fillRect(fx + 2, scanY - 8, fw - 4, 16);
+
+        ctx.beginPath();
+        ctx.moveTo(fx + 4, scanY);
+        ctx.lineTo(fx + fw - 4, scanY);
+        ctx.strokeStyle = mainColor;
+        ctx.lineWidth = 1.2;
+        ctx.shadowBlur = 6;
+        ctx.stroke();
+
+        // C. AI Analysis Tag below Face Box
+        ctx.shadowBlur = 0;
+        ctx.font = 'bold 9px monospace';
+        ctx.fillStyle = mainColor;
+        const statusText = isDrowsy
+          ? '● CRITICAL: DROWSINESS DETECTED'
+          : isWarning
+          ? '▲ WARNING: EYE CLOSURE'
+          : '● AI PERCEPTION ACTIVE';
+        ctx.fillText(statusText, fx + 4, fy + fh + 16);
+
+        // D. Eye-to-Eye Connection Tracking Line
+        ctx.beginPath();
+        ctx.setLineDash([4, 4]);
+        ctx.moveTo(lx, ly);
+        ctx.lineTo(rx, ry);
+        ctx.strokeStyle = mainColor;
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Midpoint bridge dot
+        const midX = (lx + rx) / 2;
+        const midY = (ly + ry) / 2;
+        ctx.beginPath();
+        ctx.arc(midX, midY, 2.0, 0, Math.PI * 2);
+        ctx.fillStyle = mainColor;
+        ctx.fill();
+
+        // E. Function to Draw Real-time Eye Tracking Rings + Pupil Dots
+        const drawEyeRings = (cx: number, cy: number, label: string, earVal: number | null) => {
+          const pulse = Math.sin(elapsed * 5) * 1.5;
+          const outerR = Math.max(14, fw * 0.07) + (isDrowsy ? Math.sin(elapsed * 8) * 3 : pulse);
+          const innerR = outerR * 0.52;
+
+          // Outer Concentric Ring
+          ctx.beginPath();
+          ctx.arc(cx, cy, outerR, 0, Math.PI * 2);
+          ctx.strokeStyle = mainColor;
+          ctx.lineWidth = 1.5;
+          ctx.shadowColor = glowColor;
+          ctx.shadowBlur = 7;
+          ctx.stroke();
+
+          // 4 Crosshair Ticks (0, 90, 180, 270 deg)
+          const tickLen = 4;
+          const angles = [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2];
+          angles.forEach((ang) => {
+            const x1 = cx + Math.cos(ang) * (outerR - tickLen);
+            const y1 = cy + Math.sin(ang) * (outerR - tickLen);
+            const x2 = cx + Math.cos(ang) * (outerR + tickLen);
+            const y2 = cy + Math.sin(ang) * (outerR + tickLen);
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.stroke();
+          });
+
+          // Inner Concentric Ring
+          ctx.beginPath();
+          ctx.setLineDash([2, 3]);
+          ctx.arc(cx, cy, innerR, 0, Math.PI * 2);
+          ctx.strokeStyle = isDrowsy ? '#DC2626' : isWarning ? '#D97706' : '#1687E8';
+          ctx.lineWidth = 1.0;
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          // Center Pupil / Tracking Dot
+          ctx.beginPath();
+          ctx.arc(cx, cy, 2.8, 0, Math.PI * 2);
+          ctx.fillStyle = mainColor;
+          ctx.shadowBlur = 8;
+          ctx.fill();
+
+          // Eye label and EAR indicator
+          ctx.shadowBlur = 0;
+          ctx.font = 'bold 8px monospace';
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+          const earStr = earVal !== null ? earVal.toFixed(2) : '--';
+          ctx.fillText(`${label} [${earStr}]`, cx - 18, cy - outerR - 4);
+        };
+
+        // Draw Left & Right Eye Tracking Rings
+        drawEyeRings(lx, ly, 'L-EYE', data.leftEAR);
+        drawEyeRings(rx, ry, 'R-EYE', data.rightEAR);
+
+        ctx.restore();
+      }
+
+      // --- 2. SEARCHING FOR FACE (NO FACE DETECTED) ---
+      if (smooth.opacity < 0.85) {
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, 1.0 - smooth.opacity);
+
+        const centerX = displayW / 2;
+        const centerY = displayH / 2;
+        const searchBoxW = 160;
+        const searchBoxH = 190;
+        const sfx = centerX - searchBoxW / 2;
+        const sfy = centerY - searchBoxH / 2;
+        const sCorner = 20;
+
+        ctx.strokeStyle = 'rgba(2, 132, 199, 0.5)';
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'round';
+
+        // 4 searching corners
+        ctx.beginPath();
+        ctx.moveTo(sfx, sfy + sCorner);
+        ctx.lineTo(sfx, sfy);
+        ctx.lineTo(sfx + sCorner, sfy);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(sfx + searchBoxW - sCorner, sfy);
+        ctx.lineTo(sfx + searchBoxW, sfy);
+        ctx.lineTo(sfx + searchBoxW, sfy + sCorner);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(sfx, sfy + searchBoxH - sCorner);
+        ctx.lineTo(sfx, sfy + searchBoxH);
+        ctx.lineTo(sfx + sCorner, sfy + searchBoxH);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(sfx + searchBoxW - sCorner, sfy + searchBoxH);
+        ctx.lineTo(sfx + searchBoxW, sfy + searchBoxH);
+        ctx.lineTo(sfx + searchBoxW, sfy + searchBoxH - sCorner);
+        ctx.stroke();
+
+        // Sweeping radar scan line
+        const radarY = sfy + ((Math.sin(elapsed * 2) + 1) / 2) * searchBoxH;
+        ctx.beginPath();
+        ctx.moveTo(sfx + 4, radarY);
+        ctx.lineTo(sfx + searchBoxW - 4, radarY);
+        ctx.strokeStyle = 'rgba(2, 132, 199, 0.4)';
+        ctx.stroke();
+
+        // Searching status text
+        ctx.font = 'bold 11px monospace';
+        ctx.fillStyle = 'rgba(2, 132, 199, 0.9)';
+        ctx.textAlign = 'center';
+        ctx.fillText('SEARCHING FOR FACE...', centerX, centerY + searchBoxH / 2 + 25);
+        ctx.textAlign = 'left';
+
+        ctx.restore();
+      }
+
+      // --- 3. REAL-TIME EYE TRACKING GLASS HUD CARD (TOP-RIGHT OF WEBCAM) ---
+      ctx.save();
+      const hudW = 168;
+      const hudH = 104;
+      const hudX = displayW - hudW - 12;
+      const hudY = 12;
+
+      // Rounded rect glass background
+      ctx.fillStyle = darkBg;
+      ctx.strokeStyle = isDrowsy
+        ? 'rgba(239, 68, 68, 0.6)'
+        : isWarning
+        ? 'rgba(245, 158, 11, 0.5)'
+        : 'rgba(255, 255, 255, 0.15)';
+      ctx.lineWidth = 1;
+
+      const r = 10;
+      ctx.beginPath();
+      ctx.moveTo(hudX + r, hudY);
+      ctx.lineTo(hudX + hudW - r, hudY);
+      ctx.arcTo(hudX + hudW, hudY, hudX + hudW, hudY + r, r);
+      ctx.lineTo(hudX + hudW, hudY + hudH - r);
+      ctx.arcTo(hudX + hudW, hudY + hudH, hudX + hudW - r, hudY + hudH, r);
+      ctx.lineTo(hudX + r, hudY + hudH);
+      ctx.arcTo(hudX, hudY + hudH, hudX, hudY + hudH - r, r);
+      ctx.lineTo(hudX, hudY + r);
+      ctx.arcTo(hudX, hudY, hudX + r, hudY, r);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      // HUD Title
+      ctx.font = 'bold 9px monospace';
+      ctx.fillStyle = '#00AEEF';
+      ctx.fillText('REAL-TIME EYE TRACKING', hudX + 10, hudY + 16);
+
+      // Separator line
+      ctx.beginPath();
+      ctx.moveTo(hudX + 10, hudY + 22);
+      ctx.lineTo(hudX + hudW - 10, hudY + 22);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+      ctx.stroke();
+
+      // Status Item 1: Face
+      ctx.font = '8px monospace';
+      ctx.fillStyle = data.faceDetected ? '#10B981' : '#F43F5E';
+      ctx.fillText(data.faceDetected ? '● Face: DETECTED' : '○ Face: SEARCHING', hudX + 10, hudY + 36);
+
+      // Status Item 2: Eyes
+      ctx.fillStyle = data.faceDetected ? '#00AEEF' : '#94A3B8';
+      ctx.fillText(data.faceDetected ? '● Eyes: TRACKING' : '○ Eyes: NONE', hudX + 10, hudY + 50);
+
+      // Status Item 3: State & EAR
+      const earText = data.ear !== null ? data.ear.toFixed(2) : '--';
+      ctx.fillStyle = isDrowsy ? '#EF4444' : isWarning ? '#F59E0B' : '#38BDF8';
+      ctx.fillText(`◉ State: ${data.eyeState} (${earText})`, hudX + 10, hudY + 64);
+
+      // Status Item 4: Closure countdown
+      const sec = (data.closureDurationMs / 1000).toFixed(1);
+      ctx.fillStyle = '#CBD5E1';
+      ctx.fillText(`⏱ Closure: ${sec}s / 3.0s`, hudX + 10, hudY + 78);
+
+      // Mini Closure Progress bar
+      const barW = hudW - 20;
+      const barH = 4;
+      const barX = hudX + 10;
+      const barY = hudY + 86;
+      const barPct = Math.min(1.0, data.closureDurationMs / 3000);
+
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+      ctx.fillRect(barX, barY, barW, barH);
+
+      ctx.fillStyle = isDrowsy ? '#EF4444' : '#F59E0B';
+      ctx.fillRect(barX, barY, barW * barPct, barH);
+
+      ctx.restore();
+
+      animId = requestAnimationFrame(render);
+    };
+
+    animId = requestAnimationFrame(render);
+
+    return () => {
+      cancelAnimationFrame(animId);
+    };
+  }, [cameraStatus]);
 
   const [inputIpUrl, setInputIpUrl] = useState<string>('http://192.168.1.100:4747/video');
   const [showIpInput, setShowIpInput] = useState<boolean>(false);

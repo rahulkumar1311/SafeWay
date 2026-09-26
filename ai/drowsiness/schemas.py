@@ -72,3 +72,31 @@ class DrowsinessResponse(BaseModel):
         default=None,
         description="Alert event name when threshold is crossed"
     )
+    faceRect: Optional[list] = Field(
+        default=None,
+        description="Bounding box of face [x, y, w, h]"
+    )
+    leftEye: Optional[list] = Field(
+        default=None,
+        description="Bounding box of left eye [x, y, w, h]"
+    )
+    rightEye: Optional[list] = Field(
+        default=None,
+        description="Bounding box of right eye [x, y, w, h]"
+    )
+    leftEyeCenter: Optional[list] = Field(
+        default=None,
+        description="Center coordinates of left eye [x, y]"
+    )
+    rightEyeCenter: Optional[list] = Field(
+        default=None,
+        description="Center coordinates of right eye [x, y]"
+    )
+    frameWidth: Optional[int] = Field(
+        default=480,
+        description="Width of analyzed frame"
+    )
+    frameHeight: Optional[int] = Field(
+        default=360,
+        description="Height of analyzed frame"
+    )
