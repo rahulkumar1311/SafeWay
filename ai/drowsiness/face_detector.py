@@ -28,14 +28,30 @@ class FaceDetector:
     temporal bounding box smoothing, low-light enhancement, and OpenCV cascade fallback.
     """
     def __init__(self):
-        cascade_dir = cv2.data.haarcascades
-        face_path = os.path.join(cascade_dir, 'haarcascade_frontalface_default.xml')
-        face_alt_path = os.path.join(cascade_dir, 'haarcascade_frontalface_alt2.xml')
-        eye_path = os.path.join(cascade_dir, 'haarcascade_eye.xml')
+        models_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'models')
+        os.makedirs(models_dir, exist_ok=True)
 
-        self.face_cascade = cv2.CascadeClassifier(face_path)
+        face_path = os.path.join(models_dir, 'haarcascade_frontalface_default.xml')
+        if not os.path.exists(face_path) and hasattr(cv2, 'data') and hasattr(cv2.data, 'haarcascades'):
+            fallback = os.path.join(cv2.data.haarcascades, 'haarcascade_frontalface_default.xml')
+            if os.path.exists(fallback):
+                face_path = fallback
+
+        face_alt_path = os.path.join(models_dir, 'haarcascade_frontalface_alt2.xml')
+        if not os.path.exists(face_alt_path) and hasattr(cv2, 'data') and hasattr(cv2.data, 'haarcascades'):
+            fallback = os.path.join(cv2.data.haarcascades, 'haarcascade_frontalface_alt2.xml')
+            if os.path.exists(fallback):
+                face_alt_path = fallback
+
+        eye_path = os.path.join(models_dir, 'haarcascade_eye.xml')
+        if not os.path.exists(eye_path) and hasattr(cv2, 'data') and hasattr(cv2.data, 'haarcascades'):
+            fallback = os.path.join(cv2.data.haarcascades, 'haarcascade_eye.xml')
+            if os.path.exists(fallback):
+                eye_path = fallback
+
+        self.face_cascade = cv2.CascadeClassifier(face_path) if os.path.exists(face_path) else None
         self.face_cascade_alt = cv2.CascadeClassifier(face_alt_path) if os.path.exists(face_alt_path) else self.face_cascade
-        self.eye_cascade = cv2.CascadeClassifier(eye_path)
+        self.eye_cascade = cv2.CascadeClassifier(eye_path) if os.path.exists(eye_path) else None
 
         # Temporal face tracking state across frames
         self.last_face_rect: Optional[Tuple[int, int, int, int]] = None
@@ -45,8 +61,6 @@ class FaceDetector:
         self.landmarker = None
         if MP_AVAILABLE:
             try:
-                models_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'models')
-                os.makedirs(models_dir, exist_ok=True)
                 task_path = os.path.join(models_dir, 'face_landmarker.task')
 
                 if not os.path.exists(task_path):
@@ -139,28 +153,36 @@ class FaceDetector:
                 logger.warning(f"[Face Detection] MediaPipe processing error: {e}. Falling back to OpenCV.")
 
         # Method 2: OpenCV Cascade Detection on enhanced & raw gray
-        faces = self.face_cascade.detectMultiScale(
-            enhanced_gray,
-            scaleFactor=1.05,
-            minNeighbors=3,
-            minSize=(25, 25)
-        )
+        faces = ()
+        if self.face_cascade and not self.face_cascade.empty():
+            try:
+                faces = self.face_cascade.detectMultiScale(
+                    enhanced_gray,
+                    scaleFactor=1.05,
+                    minNeighbors=3,
+                    minSize=(25, 25)
+                )
 
-        if len(faces) == 0:
-            faces = self.face_cascade.detectMultiScale(
-                gray,
-                scaleFactor=1.05,
-                minNeighbors=3,
-                minSize=(25, 25)
-            )
+                if len(faces) == 0:
+                    faces = self.face_cascade.detectMultiScale(
+                        gray,
+                        scaleFactor=1.05,
+                        minNeighbors=3,
+                        minSize=(25, 25)
+                    )
+            except Exception as e:
+                logger.warning(f"[Face Detection] Cascade error: {e}")
 
-        if len(faces) == 0:
-            faces = self.face_cascade_alt.detectMultiScale(
-                enhanced_gray,
-                scaleFactor=1.05,
-                minNeighbors=2,
-                minSize=(25, 25)
-            )
+        if len(faces) == 0 and self.face_cascade_alt and not self.face_cascade_alt.empty():
+            try:
+                faces = self.face_cascade_alt.detectMultiScale(
+                    enhanced_gray,
+                    scaleFactor=1.05,
+                    minNeighbors=2,
+                    minSize=(25, 25)
+                )
+            except Exception as e:
+                logger.warning(f"[Face Detection] Cascade alt error: {e}")
 
         if len(faces) > 0:
             frame_center_x, frame_center_y = img_w / 2.0, img_h / 2.0
@@ -171,12 +193,17 @@ class FaceDetector:
             upper_roi = face_roi_gray[0:int(fh * 0.55), :]
             lower_roi = face_roi_gray[int(fh * 0.45):, :]
 
-            eyes = self.eye_cascade.detectMultiScale(
-                upper_roi if upper_roi.size > 0 else face_roi_gray,
-                scaleFactor=1.05,
-                minNeighbors=2,
-                minSize=(10, 10)
-            )
+            eyes = ()
+            if self.eye_cascade and not self.eye_cascade.empty():
+                try:
+                    eyes = self.eye_cascade.detectMultiScale(
+                        upper_roi if upper_roi.size > 0 else face_roi_gray,
+                        scaleFactor=1.05,
+                        minNeighbors=2,
+                        minSize=(10, 10)
+                    )
+                except Exception as e:
+                    logger.warning(f"[Face Detection] Eye cascade error: {e}")
 
             self.last_face_rect = (fx, fy, fw, fh)
             self.missed_frame_count = 0
