@@ -18,5 +18,6 @@ export const config = {
   aiTrafficSignServiceUrl:
     process.env.AI_TRAFFIC_SIGN_SERVICE_URL || `${aiBaseUrl.replace(/\/$/, '')}/predict/traffic-sign`,
   aiServiceTimeoutMs: parseInt(process.env.AI_SERVICE_TIMEOUT_MS, 10) || 5000,
-  v2vRadiusMeters: parseInt(process.env.V2V_RADIUS_METERS, 10) || 500
+  v2vRadiusMeters: parseInt(process.env.V2V_RADIUS_METERS, 10) || 500,
+  aiFallbackEnabled: process.env.AI_FALLBACK_ENABLED !== 'false'
 };
