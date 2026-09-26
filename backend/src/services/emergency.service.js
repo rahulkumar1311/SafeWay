@@ -118,35 +118,66 @@ export const deleteContact = async (contactId) => {
 };
 
 /**
- * Process SOS Emergency Request
+ * Process SOS Emergency Request (Manual or Automatic Camera Collision Trigger)
  */
 export const processSOS = async (sosData = {}) => {
-  const { userId, latitude, longitude, timestamp, eventType = 'SOS' } = sosData;
+  const {
+    userId = 'default_user',
+    latitude,
+    longitude,
+    accuracy,
+    incidentId,
+    timestamp,
+    eventType = 'CAMERA_OBSTRUCTION_ACCIDENT'
+  } = sosData;
 
-  const missingFields = [];
-  if (!userId || typeof userId !== 'string' || !userId.trim()) missingFields.push('userId');
-  if (latitude === undefined || latitude === null || latitude === '') missingFields.push('latitude');
-  if (longitude === undefined || longitude === null || longitude === '') missingFields.push('longitude');
+  const cleanUserId = String(userId || 'default_user').trim();
 
-  if (missingFields.length > 0) {
-    throw new ApiError(400, `Missing required fields: ${missingFields.join(', ')}`);
+  // Deduplication check: If this incidentId has already been dispatched, return previous record
+  if (incidentId && activeAccidentEvents.has(incidentId)) {
+    const existing = activeAccidentEvents.get(incidentId);
+    if (existing && (existing.status === 'SOS_SENT' || existing.status === 'EMERGENCY_TRIGGERED')) {
+      return existing;
+    }
   }
 
-  const latNum = Number(latitude);
-  if (isNaN(latNum) || latNum < -90 || latNum > 90) {
-    throw new ApiError(400, 'Latitude must be a valid number between -90 and 90');
+  let locationObj = null;
+  if (latitude !== undefined && latitude !== null && latitude !== '' &&
+      longitude !== undefined && longitude !== null && longitude !== '') {
+    const latNum = Number(latitude);
+    const lngNum = Number(longitude);
+    if (!isNaN(latNum) && !isNaN(lngNum) && latNum >= -90 && latNum <= 90 && lngNum >= -180 && lngNum <= 180) {
+      locationObj = {
+        latitude: latNum,
+        longitude: lngNum,
+        accuracy: accuracy ? Number(accuracy) : null,
+        mapsUrl: `https://maps.google.com/?q=${latNum},${lngNum}`,
+        status: 'LOCATION_ACQUIRED'
+      };
+    }
   }
 
-  const lngNum = Number(longitude);
-  if (isNaN(lngNum) || lngNum < -180 || lngNum > 180) {
-    throw new ApiError(400, 'Longitude must be a valid number between -180 and 180');
+  if (!locationObj) {
+    locationObj = {
+      latitude: null,
+      longitude: null,
+      accuracy: null,
+      mapsUrl: null,
+      status: 'LOCATION_UNAVAILABLE'
+    };
   }
 
-  const cleanUserId = String(userId).trim();
-
-  const contacts = await EmergencyContact.find({ userId: cleanUserId })
+  // Retrieve user's configured emergency contacts from MongoDB
+  let contacts = await EmergencyContact.find({ userId: cleanUserId })
     .select('-__v')
     .lean();
+
+  // Fallback: If no contacts found for specific userId, query all emergency contacts in DB
+  if (contacts.length === 0) {
+    contacts = await EmergencyContact.find({})
+      .select('-__v')
+      .lean();
+  }
 
   const eventTime = timestamp ? new Date(timestamp) : new Date();
   const validTimestamp = isNaN(eventTime.getTime()) ? new Date().toISOString() : eventTime.toISOString();
@@ -154,18 +185,18 @@ export const processSOS = async (sosData = {}) => {
   const notificationResult = await dispatchEmergencyNotification({
     userId: cleanUserId,
     contacts,
-    location: { latitude: latNum, longitude: lngNum },
+    location: locationObj,
     eventType: String(eventType).toUpperCase(),
     timestamp: validTimestamp
   });
 
+  const eventKey = incidentId || `sos_${Date.now()}_${cleanUserId.slice(-4)}`;
   const sosRecord = {
-    sosId: `sos_${Date.now()}_${cleanUserId.slice(-4)}`,
+    sosId: eventKey,
+    incidentId: eventKey,
     userId: cleanUserId,
-    location: {
-      latitude: latNum,
-      longitude: lngNum
-    },
+    status: 'SOS_SENT',
+    location: locationObj,
     timestamp: validTimestamp,
     eventType: String(eventType).toUpperCase(),
     contactsNotifiedCount: contacts.length,
@@ -177,6 +208,10 @@ export const processSOS = async (sosData = {}) => {
     })),
     notification: notificationResult
   };
+
+  if (incidentId) {
+    activeAccidentEvents.set(incidentId, sosRecord);
+  }
 
   return sosRecord;
 };
