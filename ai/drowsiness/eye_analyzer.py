@@ -59,32 +59,21 @@ class EyeAnalyzer:
             logger.info(f"[Eye Analyzer] Computed MediaPipe 468 Mesh EAR | Left: {left_ear} | Right: {right_ear} | Avg: {ear}")
         else:
             eyes = detection_result.get("eyes", [])
-            if len(eyes) == 0 and "face_rect" in detection_result:
-                fx, fy, fw, fh = detection_result["face_rect"]
-                left_eye_box = (fx + fw * 0.15, fy + fh * 0.20, fw * 0.30, fh * 0.25)
-                right_eye_box = (fx + fw * 0.55, fy + fh * 0.20, fw * 0.30, fh * 0.25)
-                sorted_eyes = [left_eye_box, right_eye_box]
-            else:
-                sorted_eyes = sorted(eyes, key=lambda e: e[0]) if eyes else []
-
-            if len(sorted_eyes) >= 2:
-                left_eye_box = sorted_eyes[0]
-                right_eye_box = sorted_eyes[1]
-                left_lm = self._extract_6point_landmarks(left_eye_box)
-                right_lm = self._extract_6point_landmarks(right_eye_box)
-                left_ear = calculate_6point_ear(left_lm)
-                right_ear = calculate_6point_ear(right_lm)
-                ear = round(float((left_ear + right_ear) / 2.0), 3)
-            elif len(sorted_eyes) == 1:
-                single_box = sorted_eyes[0]
-                lm = self._extract_6point_landmarks(single_box)
-                ear = calculate_6point_ear(lm)
-                left_ear = ear
-                right_ear = ear
-            else:
+            # In OpenCV cascade mode, if a face is detected but the eye cascade detects NO open eyes in upper face ROI,
+            # the eyes are closed. If eye cascade detects eyes, they are open.
+            if len(eyes) >= 2:
+                left_ear = 0.30
+                right_ear = 0.30
+                ear = 0.30
+            elif len(eyes) == 1:
                 left_ear = 0.28
                 right_ear = 0.28
                 ear = 0.28
+            else:
+                # 0 open eyes detected in face -> Closed eyes
+                left_ear = 0.14
+                right_ear = 0.14
+                ear = 0.14
 
         # Determine eye state based on EAR thresholds
         # EAR < 0.21 => CLOSED, EAR < 0.24 => CLOSING, EAR >= 0.24 => OPEN
