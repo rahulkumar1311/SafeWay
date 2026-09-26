@@ -123,6 +123,8 @@ export interface SOSInput {
   userId: string;
   latitude: number;
   longitude: number;
+  accuracy?: number;
+  incidentId?: string;
   eventType?: string;
   timestamp?: string;
 }
