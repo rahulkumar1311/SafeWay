@@ -32,6 +32,7 @@ export default function DashboardPage() {
   const closedStartTimeRef = useRef<number | null>(null);
   const missedFramesRef = useRef<number>(0);
   const lastLogTimeRef = useRef<number>(0);
+  const isCameraActiveRef = useRef<boolean>(false);
 
   const initAudio = useCallback(() => {
     if (typeof window === 'undefined') return;
@@ -109,8 +110,20 @@ export default function DashboardPage() {
       clearInterval(alarmIntervalRef.current);
       alarmIntervalRef.current = null;
     }
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
+    isAlarmTriggeredRef.current = false;
+
+    if (typeof window !== 'undefined') {
+      try {
+        if ('speechSynthesis' in window) {
+          window.speechSynthesis.cancel();
+        }
+      } catch {}
+
+      try {
+        if (audioContextRef.current && audioContextRef.current.state === 'running') {
+          audioContextRef.current.suspend().catch(() => {});
+        }
+      } catch {}
     }
   }, []);
 
@@ -306,20 +319,121 @@ export default function DashboardPage() {
     };
   }, [stopContinuousAlarm]);
 
+  // Global user interaction listener to unlock AudioContext across browsers
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const unlockAudio = () => {
+      initAudio();
+    };
+    window.addEventListener('click', unlockAudio, { passive: true });
+    window.addEventListener('touchstart', unlockAudio, { passive: true });
+    window.addEventListener('keydown', unlockAudio, { passive: true });
+    return () => {
+      window.removeEventListener('click', unlockAudio);
+      window.removeEventListener('touchstart', unlockAudio);
+      window.removeEventListener('keydown', unlockAudio);
+    };
+  }, [initAudio]);
+
+  // Drowsiness Simulation Toggle for instant testing without webcam
+  const [isSimulatingDrowsiness, setIsSimulatingDrowsiness] = useState<boolean>(false);
+  const simulationIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  const handleToggleSimulation = useCallback(() => {
+    initAudio();
+    setIsSimulatingDrowsiness((prev) => {
+      const next = !prev;
+      if (next) {
+        // Activate Simulated Drowsiness Alert
+        isDrowsyRef.current = true;
+        closedStartTimeRef.current = Date.now() - 3200;
+        isAlarmTriggeredRef.current = true;
+        startContinuousAlarm();
+
+        setDrowsinessTelemetry({
+          score: 96,
+          isDrowsy: true,
+          alertState: 'DROWSY',
+          faceDetected: true,
+          ear: 0.12,
+          leftEAR: 0.12,
+          rightEAR: 0.12,
+          eyeState: 'CLOSED',
+          closureDurationMs: 3200,
+          faceRect: [140, 90, 200, 200],
+          leftEyeCenter: [200, 160],
+          rightEyeCenter: [280, 160],
+          frameWidth: 480,
+          frameHeight: 360
+        });
+
+        // Trigger automatic pull-over stop simulation after 2.5s if car is moving
+        if (simulationIntervalRef.current) clearInterval(simulationIntervalRef.current);
+        simulationIntervalRef.current = setTimeout(() => {
+          handleVehicleStopped();
+        }, 2500);
+      } else {
+        // Deactivate Simulation
+        isDrowsyRef.current = false;
+        closedStartTimeRef.current = null;
+        isAlarmTriggeredRef.current = false;
+        stopContinuousAlarm();
+        if (simulationIntervalRef.current) {
+          clearTimeout(simulationIntervalRef.current);
+          simulationIntervalRef.current = null;
+        }
+
+        setDrowsinessTelemetry({
+          score: 12,
+          isDrowsy: false,
+          alertState: 'NORMAL',
+          faceDetected: true,
+          ear: 0.28,
+          leftEAR: 0.29,
+          rightEAR: 0.28,
+          eyeState: 'OPEN',
+          closureDurationMs: 0,
+          faceRect: null,
+          leftEyeCenter: null,
+          rightEyeCenter: null,
+          frameWidth: 480,
+          frameHeight: 360
+        });
+      }
+      return next;
+    });
+  }, [initAudio, startContinuousAlarm, stopContinuousAlarm, handleVehicleStopped]);
+
   // 3. Real Webcam & Drowsiness AI Stream Hook
   const {
     videoRef,
     canvasRef,
     cameraStatus,
     cameraSource,
+    setCameraSource,
+    errorMessage,
+    activeTrackInfo,
     startCamera,
     stopCamera
   } = useWebcam({
-    fps: 5,
+    fps: 3,
+    jpegQuality: 0.5,
+    targetWidth: 480,
+    targetHeight: 360,
     onFrame: async (base64Image) => {
+      // If camera is stopped or simulation mode is active, do not process
+      if (!isCameraActiveRef.current || cameraStatus !== 'CAMERA_ACTIVE' || isSimulatingDrowsiness) return;
+
       try {
         const res = await aiApi.analyzeDrowsiness('dashboard_session', base64Image);
-        const data = res.data;
+
+        // Crucial guard: If camera was stopped while awaiting AI response, immediately kill alarms and exit!
+        if (!isCameraActiveRef.current || cameraStatus !== 'CAMERA_ACTIVE') {
+          stopContinuousAlarm();
+          return;
+        }
+
+        const data = (res as any)?.data || (res as any);
         if (!data) return;
 
         const now = Date.now();
@@ -351,16 +465,25 @@ export default function DashboardPage() {
         let isDrowsy = false;
         let score = Math.max(0, Number(data.drowsinessScore) || 0);
 
+        // Also check if backend AI service directly flagged drowsiness
+        const isAiDrowsySignal = Boolean(
+          data.isDrowsy ||
+          data.alert ||
+          data.alertState === 'DROWSY' ||
+          data.alertState === 'ALERT' ||
+          score >= 70
+        );
+
         if (!faceDetected && missedFramesRef.current > 2) {
           alertState = 'NORMAL';
           score = 0;
-        } else if (durationMs >= 3000) {
-          // Continuous 3.0 seconds closure reached -> Drowsiness alert triggered!
+        } else if (durationMs >= 3000 || (isClosed && isAiDrowsySignal) || isAiDrowsySignal) {
+          // Continuous 3.0 seconds closure reached OR AI high risk signal triggered
           alertState = 'DROWSY';
           isDrowsy = true;
           score = Math.max(88, score);
 
-          if (!isAlarmTriggeredRef.current) {
+          if (!isAlarmTriggeredRef.current && isCameraActiveRef.current) {
             isAlarmTriggeredRef.current = true;
             startContinuousAlarm();
           }
@@ -386,9 +509,15 @@ export default function DashboardPage() {
           console.log(
             `[Drowsiness Pipeline] EAR: ${ear?.toFixed(2) ?? 'N/A'} | EYE_STATE: ${eyeState} | ` +
             `CLOSURE_TIME: ${(durationMs / 1000).toFixed(1)}s | IS_DROWSY: ${isDrowsy} | ` +
-            `EMERGENCY_STATE: ${isDrowsy ? 'PULLING_OVER' : 'NORMAL'} | VEHICLE_SPEED: ${manualSpeedKmH} | ` +
+            `ALERT_STATE: ${alertState} | VEHICLE_SPEED: ${manualSpeedKmH} | ` +
             `SOS_COUNTDOWN: ${sosCountdown ?? '--'} | SOS_STATE: ${sosStatus?.type ?? 'IDLE'}`
           );
+        }
+
+        // Final check before updating state
+        if (!isCameraActiveRef.current || cameraStatus !== 'CAMERA_ACTIVE') {
+          stopContinuousAlarm();
+          return;
         }
 
         setDrowsinessTelemetry({
@@ -414,16 +543,65 @@ export default function DashboardPage() {
   });
 
   const handleStartCamera = useCallback(() => {
+    isCameraActiveRef.current = true;
     initAudio();
     startCamera();
   }, [initAudio, startCamera]);
 
   const handleStopCamera = useCallback(() => {
+    isCameraActiveRef.current = false;
     stopContinuousAlarm();
     isAlarmTriggeredRef.current = false;
     closedStartTimeRef.current = null;
+    isDrowsyRef.current = false;
+
+    // Reset simulation state if active
+    setIsSimulatingDrowsiness(false);
+    if (simulationIntervalRef.current) {
+      clearTimeout(simulationIntervalRef.current);
+      simulationIntervalRef.current = null;
+    }
+
+    // Cancel SOS countdown if active
+    if (sosIntervalRef.current) {
+      clearInterval(sosIntervalRef.current);
+      sosIntervalRef.current = null;
+    }
+    setSosCountdown(null);
+
+    // Reset telemetry immediately to clear alert states
+    setDrowsinessTelemetry({
+      score: 12,
+      isDrowsy: false,
+      alertState: 'NORMAL',
+      faceDetected: true,
+      ear: 0.28,
+      leftEAR: 0.29,
+      rightEAR: 0.28,
+      eyeState: 'OPEN',
+      closureDurationMs: 0,
+      faceRect: null,
+      leftEyeCenter: null,
+      rightEyeCenter: null,
+      frameWidth: 480,
+      frameHeight: 360
+    });
+
     stopCamera();
   }, [stopCamera, stopContinuousAlarm]);
+
+  // Immediate audio and alarm cutoff when camera stops or disconnects
+  useEffect(() => {
+    if (cameraStatus !== 'CAMERA_ACTIVE' && !isSimulatingDrowsiness) {
+      isCameraActiveRef.current = false;
+      stopContinuousAlarm();
+      isAlarmTriggeredRef.current = false;
+      closedStartTimeRef.current = null;
+      isDrowsyRef.current = false;
+    } else if (cameraStatus === 'CAMERA_ACTIVE') {
+      isCameraActiveRef.current = true;
+    }
+  }, [cameraStatus, isSimulatingDrowsiness, stopContinuousAlarm]);
 
   // 4. Real Accident Crash Detector
   const {
@@ -683,8 +861,8 @@ export default function DashboardPage() {
             detectedObjects={detected3DObjects}
             nearbyV2VVehicles={nearbyVehicles}
             threatLevel={riskLevel === 'HIGH' ? 'CRITICAL' : riskLevel === 'MEDIUM' ? 'WARNING' : 'SAFE'}
-            isDrowsy={drowsinessTelemetry.isDrowsy}
-            emergencyPullOver={drowsinessTelemetry.isDrowsy || riskLevel === 'HIGH'}
+            isDrowsy={drowsinessTelemetry.isDrowsy || isSimulatingDrowsiness}
+            emergencyPullOver={drowsinessTelemetry.isDrowsy || isSimulatingDrowsiness || riskLevel === 'HIGH'}
           />
 
           {/* Central Speed Advisory HUD */}
@@ -702,7 +880,7 @@ export default function DashboardPage() {
           <CockpitDriverMonitorHUD
             score={drowsinessTelemetry.score}
             drowsinessScore={drowsinessTelemetry.score}
-            isDrowsy={drowsinessTelemetry.isDrowsy}
+            isDrowsy={drowsinessTelemetry.isDrowsy || isSimulatingDrowsiness}
             alertState={drowsinessTelemetry.alertState}
             faceDetected={drowsinessTelemetry.faceDetected}
             isFaceDetected={drowsinessTelemetry.faceDetected}
@@ -710,6 +888,9 @@ export default function DashboardPage() {
             earValue={drowsinessTelemetry.ear}
             closureDurationMs={drowsinessTelemetry.closureDurationMs}
             eyeClosureDurationSeconds={drowsinessTelemetry.closureDurationMs / 1000}
+            isSimulating={isSimulatingDrowsiness}
+            onToggleSimulation={handleToggleSimulation}
+            onTestBuzzer={playAlertBuzzer}
           />
 
           {/* Road Safety Camera Feed with Real-Time Spatial AI Reticles */}
@@ -718,9 +899,14 @@ export default function DashboardPage() {
             canvasRef={canvasRef}
             cameraStatus={cameraStatus}
             cameraSource={cameraSource}
+            deviceLabel={activeTrackInfo?.label || (cameraSource === 'USB_MOBILE_CAMERA' ? 'USB Phone' : 'Integrated Webcam')}
+            errorMessage={errorMessage}
+            onSwitchSource={setCameraSource}
             onStartCamera={handleStartCamera}
             onStopCamera={handleStopCamera}
             trackingData={drowsinessTelemetry}
+            isSimulating={isSimulatingDrowsiness}
+            onToggleSimulation={handleToggleSimulation}
           />
 
           {/* V2V Mesh Network Mesh List */}

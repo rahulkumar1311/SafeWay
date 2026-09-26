@@ -45,6 +45,7 @@ export function useWebcam(options: UseWebcamOptions = {}) {
   const offscreenCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const isProcessingRef = useRef<boolean>(false);
+  const isRunningRef = useRef<boolean>(false);
 
   const [cameraStatus, setCameraStatus] = useState<CameraStatus>('CAMERA_PERMISSION_REQUIRED');
   const [errorMessage, setErrorMessage] = useState<string>('');
@@ -115,6 +116,7 @@ export function useWebcam(options: UseWebcamOptions = {}) {
 
   // Centralized, idempotent stopCamera cleanup function
   const stopCamera = useCallback(() => {
+    isRunningRef.current = false;
     isProcessingRef.current = false;
 
     if (streamRef.current) {
@@ -440,6 +442,7 @@ export function useWebcam(options: UseWebcamOptions = {}) {
         });
 
         // Set status to ACTIVE now that frames are actually ready
+        isRunningRef.current = true;
         setCameraStatus('CAMERA_ACTIVE');
 
         // Re-scan devices so all real device labels are refreshed in dropdown
@@ -465,6 +468,7 @@ export function useWebcam(options: UseWebcamOptions = {}) {
       const validUrl = url.trim() || 'http://192.168.1.100:4747/video';
       setIpStreamUrl(validUrl);
       setCameraSource('IP_STREAM');
+      isRunningRef.current = true;
       setCameraStatus('CAMERA_ACTIVE');
       setActiveTrackInfo({
         deviceId: 'ip-stream',
@@ -542,9 +546,10 @@ export function useWebcam(options: UseWebcamOptions = {}) {
     let intervalId: NodeJS.Timeout | null = null;
 
     if (cameraStatus === 'CAMERA_ACTIVE') {
+      isRunningRef.current = true;
       const intervalMs = Math.max(150, Math.round(1000 / fps));
       intervalId = setInterval(async () => {
-        if (isProcessingRef.current) return;
+        if (!isRunningRef.current || isProcessingRef.current) return;
 
         // Initialize reusable offscreen canvas once to avoid DOM canvas allocation lag
         if (!offscreenCanvasRef.current) {
@@ -588,10 +593,12 @@ export function useWebcam(options: UseWebcamOptions = {}) {
           }
         }
 
+        if (!isRunningRef.current) return;
+
         // Fast JPEG encoding on small canvas (< 1ms CPU time, ~15KB string)
         const base64Jpeg = offscreen.toDataURL('image/jpeg', jpegQuality);
 
-        if (onFrameRef.current) {
+        if (onFrameRef.current && isRunningRef.current) {
           try {
             isProcessingRef.current = true;
             await onFrameRef.current(base64Jpeg);
@@ -602,9 +609,12 @@ export function useWebcam(options: UseWebcamOptions = {}) {
           }
         }
       }, intervalMs);
+    } else {
+      isRunningRef.current = false;
     }
 
     return () => {
+      isRunningRef.current = false;
       if (intervalId) clearInterval(intervalId);
       isProcessingRef.current = false;
     };
