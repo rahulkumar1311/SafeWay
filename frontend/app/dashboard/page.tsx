@@ -548,12 +548,54 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* LEFT & CENTER COLUMN (2/3): 3D WebGL Vehicle Canvas + Dynamic Speed HUD */}
         <div className="lg:col-span-2 space-y-6">
-          {/* Automatic Emergency SOS Alert Banner */}
-          {sosStatus && (
+          {/* Prominent 15-Second Emergency SOS Modal Popup */}
+          {sosStatus && sosStatus.type === 'COUNTDOWN' && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-md animate-in fade-in duration-200">
+              <div className="w-full max-w-md bg-white rounded-3xl p-6 sm:p-8 shadow-2xl border-2 border-rose-500 space-y-6 text-center font-mono">
+                <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-rose-100 border border-rose-300 text-rose-700 font-extrabold text-xs tracking-wider">
+                  <span className="w-2 h-2 rounded-full bg-rose-600 animate-ping" />
+                  <span>⚠ EMERGENCY DETECTED</span>
+                </div>
+
+                <div className="space-y-2">
+                  <h3 className="text-xl sm:text-2xl font-black text-slate-900 font-outfit uppercase tracking-tight">
+                    DRIVER DROWSINESS DETECTED
+                  </h3>
+                  <p className="text-xs text-slate-600 leading-relaxed font-sans font-medium">
+                    Vehicle has been safely stopped on the roadside.
+                    Emergency SOS with live GPS location will be dispatched in:
+                  </p>
+                </div>
+
+                {/* Large 15-Second Countdown Ring */}
+                <div className="py-2 flex justify-center">
+                  <div className="flex flex-col items-center justify-center w-28 h-28 rounded-full bg-rose-600 text-white shadow-xl shadow-rose-600/30 border-4 border-rose-200 animate-pulse">
+                    <span className="text-4xl font-black font-outfit tracking-tighter leading-none">
+                      {sosCountdown}
+                    </span>
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-rose-100 mt-1">
+                      SECONDS
+                    </span>
+                  </div>
+                </div>
+
+                {/* Cancel SOS Action Button */}
+                <div className="pt-2">
+                  <button
+                    onClick={handleCancelSOS}
+                    className="w-full py-3.5 px-6 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs uppercase tracking-wider shadow-lg hover:scale-102 transition-all active:scale-98 cursor-pointer"
+                  >
+                    [ CANCEL SOS ]
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Automatic Emergency SOS Status Banner (Post-Countdown / Alerts) */}
+          {sosStatus && sosStatus.type !== 'COUNTDOWN' && (
             <div className={`p-4 rounded-2xl border shadow-lg transition-all font-mono ${
-              sosStatus.type === 'COUNTDOWN'
-                ? 'bg-rose-950/90 border-rose-500 text-white shadow-rose-500/20 animate-pulse'
-                : sosStatus.type === 'SENT'
+              sosStatus.type === 'SENT'
                 ? 'bg-emerald-950/90 border-emerald-500 text-white shadow-emerald-500/20'
                 : sosStatus.type === 'NO_CONTACTS' || sosStatus.type === 'FAILED'
                 ? 'bg-amber-950/90 border-amber-500 text-white shadow-amber-500/20'
@@ -561,11 +603,6 @@ export default function DashboardPage() {
             }`}>
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
-                  {sosStatus.type === 'COUNTDOWN' && (
-                    <div className="w-10 h-10 rounded-xl bg-rose-600 flex items-center justify-center font-black text-lg text-white font-outfit shrink-0 shadow-md">
-                      {sosCountdown}s
-                    </div>
-                  )}
                   {sosStatus.type === 'SENT' && (
                     <div className="w-10 h-10 rounded-xl bg-emerald-600 flex items-center justify-center font-black text-lg text-white shrink-0 shadow-md">
                       ✓
@@ -584,10 +621,8 @@ export default function DashboardPage() {
 
                   <div className="space-y-0.5">
                     <div className="text-xs font-bold uppercase tracking-wider text-white">
-                      {sosStatus.type === 'COUNTDOWN'
-                        ? 'AUTOMATIC SOS DISPATCH IN PROGRESS'
-                        : sosStatus.type === 'SENT'
-                        ? 'EMERGENCY SOS DISPATCHED'
+                      {sosStatus.type === 'SENT'
+                        ? '🚨 SOS ALERT SENT'
                         : sosStatus.type === 'NO_CONTACTS'
                         ? 'EMERGENCY CONFIGURATION REQUIRED'
                         : sosStatus.type === 'CANCELLED'
@@ -610,23 +645,12 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
-                {sosStatus.type === 'COUNTDOWN' && (
-                  <button
-                    onClick={handleCancelSOS}
-                    className="px-4 py-2 rounded-xl bg-white text-rose-700 hover:bg-rose-50 font-black text-xs uppercase tracking-wider shadow-md hover:scale-105 transition-all cursor-pointer shrink-0"
-                  >
-                    CANCEL SOS
-                  </button>
-                )}
-
-                {sosStatus.type !== 'COUNTDOWN' && (
-                  <button
-                    onClick={() => setSosStatus(null)}
-                    className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-200 text-[10px] font-bold transition-all cursor-pointer shrink-0"
-                  >
-                    DISMISS
-                  </button>
-                )}
+                <button
+                  onClick={() => setSosStatus(null)}
+                  className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-200 text-[10px] font-bold transition-all cursor-pointer shrink-0"
+                >
+                  DISMISS
+                </button>
               </div>
             </div>
           )}

@@ -498,14 +498,14 @@ export const Cockpit3DVehicleView: React.FC<Cockpit3DVehicleViewProps> = ({
         {safetyMode === 'PULLING_OVER' && (
           <div className="flex items-center gap-2 bg-rose-600 border border-rose-400 px-3 py-1.5 rounded-xl backdrop-blur-md shadow-lg text-white font-bold text-xs animate-pulse">
             <AlertTriangle className="w-4 h-4 text-white shrink-0" />
-            <span>⚠ EMERGENCY PULL-OVER: VEHICLE MOVING TO SAFE SHOULDER</span>
+            <span>⚠ DROWSINESS EMERGENCY: SAFE STOP INITIATED</span>
           </div>
         )}
 
         {safetyMode === 'STOPPED' && (
           <div className="flex items-center gap-2 bg-rose-700 border border-rose-500 px-3 py-1.5 rounded-xl backdrop-blur-md shadow-lg text-white font-bold text-xs">
             <ShieldCheck className="w-4 h-4 text-white shrink-0" />
-            <span>⚠ VEHICLE SAFELY STOPPED: SAFETY MODE ACTIVE</span>
+            <span>⚠ SAFE STOP COMPLETED: VEHICLE PARKED ON SHOULDER</span>
           </div>
         )}
 
