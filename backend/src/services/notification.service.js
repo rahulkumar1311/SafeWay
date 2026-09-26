@@ -24,13 +24,18 @@ export const dispatchEmergencyNotification = async ({
     };
   }
 
-  const lat = location?.latitude ?? 0;
-  const lng = location?.longitude ?? 0;
-  const mapsUrl = `https://maps.google.com/?q=${lat},${lng}`;
+  const lat = location?.latitude;
+  const lng = location?.longitude;
+  const accuracy = location?.accuracy;
+  const hasGps = lat !== null && lat !== undefined && lng !== null && lng !== undefined;
+  const mapsUrl = hasGps ? `https://maps.google.com/?q=${lat},${lng}` : null;
+  const locationString = hasGps
+    ? `${lat.toFixed(6)}, ${lng.toFixed(6)}${accuracy ? ` (Accuracy: ~${Math.round(accuracy)}m)` : ''}`
+    : 'Location GPS Unavailable';
   const eventTimeFormatted = timestamp ? new Date(timestamp).toLocaleString('en-IN') : new Date().toLocaleString('en-IN');
 
   // Formatted SMS Message Payload
-  const smsPayload = `🚨 SAFeway AI EMERGENCY ALERT\n\nPossible vehicle accident detected.\n\nTime: ${eventTimeFormatted}\nLocation: ${mapsUrl}\nStatus: EMERGENCY_CONFIRMED\n\nPlease contact the driver/emergency services immediately.`;
+  const smsPayload = `🚨 SAFEWAY.AI AUTOMATIC SOS\n\nPossible vehicle accident detected.\nEmergency assistance may be required.\n\nTime: ${eventTimeFormatted}\nLocation: ${locationString}${mapsUrl ? `\nMap: ${mapsUrl}` : ''}\nStatus: EMERGENCY_DISPATCHED`;
 
   const smsProvider = process.env.SMS_PROVIDER || 'MOCK';
   const twilioSid = process.env.TWILIO_ACCOUNT_SID;
