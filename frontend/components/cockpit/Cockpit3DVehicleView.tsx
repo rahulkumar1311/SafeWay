@@ -24,6 +24,7 @@ interface Cockpit3DVehicleViewProps {
   speedKmH?: number | null;
   onSpeedChange?: (speed: number) => void;
   onHeadingChange?: (heading: number) => void;
+  onVehicleStopped?: () => void;
   isDrowsy?: boolean;
   emergencyPullOver?: boolean;
 }
@@ -36,6 +37,7 @@ export const Cockpit3DVehicleView: React.FC<Cockpit3DVehicleViewProps> = ({
   speedKmH = 0,
   onSpeedChange,
   onHeadingChange,
+  onVehicleStopped,
   isDrowsy = false,
   emergencyPullOver = false
 }) => {
@@ -92,10 +94,10 @@ export const Cockpit3DVehicleView: React.FC<Cockpit3DVehicleViewProps> = ({
   const objectGroupRef = useRef<THREE.Group | null>(null);
   const animFrameIdRef = useRef<number | null>(null);
 
-  const propsRef = useRef({ heading, detectedObjects, nearbyV2VVehicles, threatLevel, speedKmH, manualMode, isDrowsy, emergencyPullOver });
+  const propsRef = useRef({ heading, detectedObjects, nearbyV2VVehicles, threatLevel, speedKmH, manualMode, isDrowsy, emergencyPullOver, onVehicleStopped });
   useEffect(() => {
-    propsRef.current = { heading, detectedObjects, nearbyV2VVehicles, threatLevel, speedKmH, manualMode, isDrowsy, emergencyPullOver };
-  }, [heading, detectedObjects, nearbyV2VVehicles, threatLevel, speedKmH, manualMode, isDrowsy, emergencyPullOver]);
+    propsRef.current = { heading, detectedObjects, nearbyV2VVehicles, threatLevel, speedKmH, manualMode, isDrowsy, emergencyPullOver, onVehicleStopped };
+  }, [heading, detectedObjects, nearbyV2VVehicles, threatLevel, speedKmH, manualMode, isDrowsy, emergencyPullOver, onVehicleStopped]);
 
   // Keyboard Driving Controls: Arrow Keys / WASD / Spacebar
   useEffect(() => {
@@ -335,6 +337,9 @@ export const Cockpit3DVehicleView: React.FC<Cockpit3DVehicleViewProps> = ({
           if (safetyModeRef.current !== 'STOPPED') {
             safetyModeRef.current = 'STOPPED';
             setSafetyMode('STOPPED');
+            if (currentProps.onVehicleStopped) {
+              currentProps.onVehicleStopped();
+            }
           }
         }
       } else {
