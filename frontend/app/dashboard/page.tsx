@@ -312,9 +312,6 @@ export default function DashboardPage() {
     canvasRef,
     cameraStatus,
     cameraSource,
-    fps,
-    detectedCount,
-    switchSource,
     startCamera,
     stopCamera
   } = useWebcam({
@@ -721,9 +718,6 @@ export default function DashboardPage() {
             canvasRef={canvasRef}
             cameraStatus={cameraStatus}
             cameraSource={cameraSource}
-            fps={fps}
-            detectedCount={detectedCount}
-            onSwitchSource={switchSource}
             onStartCamera={handleStartCamera}
             onStopCamera={handleStopCamera}
             trackingData={drowsinessTelemetry}
@@ -738,19 +732,20 @@ export default function DashboardPage() {
 
           {/* Real Emergency SOS Dispatch Center */}
           <CockpitEmergencyHUD
-            crashState={crashState}
-            countdown={countdown}
-            onCancelEmergency={cancelEmergency}
-            onConfirmEmergency={confirmEmergency}
+            isEmergencyActive={sosCountdown !== null}
+            countdownSeconds={sosCountdown ?? 0}
+            onCancel={handleCancelSOS}
+            onSendNow={() => dispatchAutoSOS('manual_sos_trigger')}
           />
         </div>
       </div>
 
       {/* 4. BOTTOM COCKPIT QUICK ACCESS RAIL */}
       <CockpitBottomRail
-        onEmergencyClick={() => {
-          if (typeof window !== 'undefined') window.location.href = '/emergency';
-        }}
+        speedKmH={0}
+        gpsStatus="LIVE"
+        aiOnline={cameraStatus === 'CAMERA_ACTIVE'}
+        v2vConnected={v2vStatus === 'ONLINE'}
       />
     </div>
   );

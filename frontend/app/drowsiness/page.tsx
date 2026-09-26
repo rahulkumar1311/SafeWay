@@ -27,6 +27,8 @@ export default function DrowsinessPage() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const alarmIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const [isSoundMuted, setIsSoundMuted] = useState<boolean>(false);
+  const [isSimulatingDrowsiness, setIsSimulatingDrowsiness] = useState<boolean>(false);
+  const [audioTested, setAudioTested] = useState<boolean>(false);
 
   const initAudio = useCallback(() => {
     if (typeof window === 'undefined') return;
@@ -45,11 +47,36 @@ export default function DrowsinessPage() {
     }
   }, []);
 
-  // Sharp, urgent two-tone alert buzzer
+  // Global user interaction listener to unlock AudioContext across browsers
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const unlockAudio = () => {
+      initAudio();
+    };
+    window.addEventListener('click', unlockAudio, { passive: true });
+    window.addEventListener('touchstart', unlockAudio, { passive: true });
+    window.addEventListener('keydown', unlockAudio, { passive: true });
+    return () => {
+      window.removeEventListener('click', unlockAudio);
+      window.removeEventListener('touchstart', unlockAudio);
+      window.removeEventListener('keydown', unlockAudio);
+    };
+  }, [initAudio]);
+
+  // Sharp, urgent two-tone alert buzzer (880Hz to 1100Hz)
   const playAlertBuzzer = useCallback(() => {
     if (isSoundMuted || typeof window === 'undefined') return;
     initAudio();
-    const ctx = audioContextRef.current;
+    let ctx = audioContextRef.current;
+    if (!ctx) {
+      try {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioCtx) {
+          ctx = new AudioCtx();
+          audioContextRef.current = ctx;
+        }
+      } catch (e) {}
+    }
     if (!ctx) return;
 
     try {
@@ -66,16 +93,16 @@ export default function DrowsinessPage() {
       osc.frequency.setValueAtTime(880, now);
       osc.frequency.setValueAtTime(1100, now + 0.15);
 
-      gain.gain.setValueAtTime(0.25, now);
-      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.35);
+      gain.gain.setValueAtTime(0.35, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.40);
 
       osc.connect(gain);
       gain.connect(ctx.destination);
 
       osc.start(now);
-      osc.stop(now + 0.35);
+      osc.stop(now + 0.40);
     } catch (e) {
-      console.warn('[Drowsiness Audio] Play buzzer note:', e);
+      console.warn('[Drowsiness Audio] Play buzzer note error:', e);
     }
   }, [initAudio, isSoundMuted]);
 
@@ -91,7 +118,7 @@ export default function DrowsinessPage() {
         utterance.volume = 1.0;
         window.speechSynthesis.speak(utterance);
       } catch (e) {
-        console.warn('[Drowsiness Audio] Voice synthesis note:', e);
+        console.warn('[Drowsiness Audio] Voice synthesis error:', e);
       }
     },
     [isSoundMuted]
@@ -103,7 +130,7 @@ export default function DrowsinessPage() {
     speakVoiceAlert('Warning: Driver drowsiness detected! Open your eyes!');
     alarmIntervalRef.current = setInterval(() => {
       playAlertBuzzer();
-    }, 600);
+    }, 550);
   }, [playAlertBuzzer, speakVoiceAlert]);
 
   const stopContinuousAlarm = useCallback(() => {
@@ -115,6 +142,16 @@ export default function DrowsinessPage() {
       window.speechSynthesis.cancel();
     }
   }, []);
+
+  // Explicit test sound alarm button handler
+  const handleTestSoundAlarm = useCallback(() => {
+    initAudio();
+    setIsSoundMuted(false);
+    playAlertBuzzer();
+    speakVoiceAlert('Driver drowsiness audio alert system operational.');
+    setAudioTested(true);
+    setTimeout(() => setAudioTested(false), 3000);
+  }, [initAudio, playAlertBuzzer, speakVoiceAlert]);
 
   // 2. Continuous 3-Second Eye-Closure State via Stable Refs
   const closedStartTimeRef = useRef<number | null>(null);
@@ -172,21 +209,43 @@ export default function DrowsinessPage() {
     onFrame: async (base64Frame) => {
       try {
         const res = await aiApi.analyzeDrowsiness('drowsiness_page_session', base64Frame);
-        if (!res || !res.success || !res.data) return;
-
-        const data = res.data;
+        const data = res?.data;
         const now = Date.now();
-        const faceDetected = Boolean(data.faceDetected);
 
+        // Handle simulation test mode
+        if (isSimulatingDrowsiness) {
+          if (closedStartTimeRef.current === null) {
+            closedStartTimeRef.current = now - 3200;
+          }
+          const durationMs = now - closedStartTimeRef.current;
+          if (!isAlarmTriggeredRef.current) {
+            isAlarmTriggeredRef.current = true;
+            startContinuousAlarm();
+          }
+          setTelemetry({
+            faceDetected: true,
+            eyeState: 'CLOSED',
+            ear: 0.14,
+            leftEAR: 0.14,
+            rightEAR: 0.14,
+            closureDurationMs: durationMs,
+            score: 95,
+            isDrowsy: true,
+            alertState: 'DROWSINESS_ALERT'
+          });
+          return;
+        }
+
+        const faceDetected = Boolean(data?.faceDetected);
         let eyeState: 'OPEN' | 'CLOSED' | 'CLOSING' | 'UNKNOWN' | 'NO_FACE' = 'UNKNOWN';
         let isClosed = false;
-        const ear = data.ear !== undefined && data.ear !== null ? Number(data.ear) : null;
-        const leftEAR = data.leftEAR !== undefined && data.leftEAR !== null ? Number(data.leftEAR) : null;
-        const rightEAR = data.rightEAR !== undefined && data.rightEAR !== null ? Number(data.rightEAR) : null;
+
+        const ear = data?.ear !== undefined && data?.ear !== null ? Number(data.ear) : null;
+        const leftEAR = data?.leftEAR !== undefined && data?.leftEAR !== null ? Number(data.leftEAR) : null;
+        const rightEAR = data?.rightEAR !== undefined && data?.rightEAR !== null ? Number(data.rightEAR) : null;
 
         if (!faceDetected) {
           missedFramesRef.current += 1;
-          // Grace period: allow 2 missed frames for momentary motion blur before resetting
           if (missedFramesRef.current > 2) {
             closedStartTimeRef.current = null;
             if (isAlarmTriggeredRef.current) {
@@ -200,15 +259,15 @@ export default function DrowsinessPage() {
         } else {
           missedFramesRef.current = 0;
 
-          // Reliable eye state threshold: EAR < 0.22 is CLOSED/CLOSING
-          if (data.eyeState === 'CLOSED' || data.eyeState === 'CLOSING' || (ear !== null && ear < 0.22)) {
+          // Eye state threshold: EAR < 0.22 is CLOSED/CLOSING
+          if (data?.eyeState === 'CLOSED' || data?.eyeState === 'CLOSING' || (ear !== null && ear < 0.22)) {
             isClosed = true;
-            eyeState = (data.eyeState as any) || 'CLOSED';
-          } else if (data.eyeState === 'OPEN' || (ear !== null && ear >= 0.22)) {
+            eyeState = (data?.eyeState as any) || 'CLOSED';
+          } else if (data?.eyeState === 'OPEN' || (ear !== null && ear >= 0.22)) {
             isClosed = false;
             eyeState = 'OPEN';
           } else {
-            eyeState = (data.eyeState as any) || 'UNKNOWN';
+            eyeState = (data?.eyeState as any) || 'UNKNOWN';
           }
 
           if (isClosed) {
@@ -232,13 +291,20 @@ export default function DrowsinessPage() {
 
         let alertState: 'NORMAL' | 'EYES_CLOSED_WARNING' | 'DROWSINESS_ALERT' | 'NO_FACE' = 'NORMAL';
         let isDrowsy = false;
-        let score = Math.max(0, Number(data.drowsinessScore) || 0);
+        let score = Math.max(0, Number(data?.drowsinessScore) || 0);
+
+        const isAiDrowsySignal = Boolean(
+          data?.isDrowsy ||
+          data?.alert ||
+          data?.alertState === 'DROWSY' ||
+          data?.alertState === 'ALERT'
+        );
 
         if (!faceDetected && missedFramesRef.current > 2) {
           alertState = 'NO_FACE';
           score = 0;
-        } else if (durationMs >= 3000) {
-          // Continuous 3.0 seconds closure triggered
+        } else if (durationMs >= 3000 || (isClosed && isAiDrowsySignal)) {
+          // Continuous 3.0 seconds closure OR AI high risk signal triggered
           alertState = 'DROWSINESS_ALERT';
           isDrowsy = true;
           score = Math.max(85, score);
@@ -926,6 +992,47 @@ export default function DrowsinessPage() {
               <span>WiFi Stream</span>
             </button>
           </div>
+
+          {/* Test Sound Alarm Button */}
+          <button
+            type="button"
+            onClick={handleTestSoundAlarm}
+            className={`px-3 py-2 rounded-xl border font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer ${
+              audioTested
+                ? 'bg-emerald-500 border-emerald-600 text-white shadow-sm'
+                : 'bg-amber-500 hover:bg-amber-600 border-amber-600 text-white shadow-sm'
+            }`}
+            title="Click to test buzzer alarm & voice alert audio output"
+          >
+            <Volume2 className="w-4 h-4" />
+            <span>{audioTested ? 'BUZZER TESTED ✓' : 'TEST SOUND ALARM'}</span>
+          </button>
+
+          {/* Simulate Drowsiness Alert Toggle Button */}
+          <button
+            type="button"
+            onClick={() => {
+              initAudio();
+              setIsSimulatingDrowsiness((prev) => {
+                const nextState = !prev;
+                if (!nextState) {
+                  closedStartTimeRef.current = null;
+                  isAlarmTriggeredRef.current = false;
+                  stopContinuousAlarm();
+                }
+                return nextState;
+              });
+            }}
+            className={`px-3 py-2 rounded-xl border font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer ${
+              isSimulatingDrowsiness
+                ? 'bg-rose-600 border-rose-700 text-white animate-pulse shadow-md shadow-rose-600/30'
+                : 'bg-slate-800 hover:bg-slate-900 border-slate-700 text-white shadow-sm'
+            }`}
+            title="Click to trigger simulated 3.0s continuous eye closure & alarm for testing"
+          >
+            <AlertTriangle className="w-4 h-4 text-amber-400" />
+            <span>{isSimulatingDrowsiness ? 'STOP SIMULATION' : 'SIMULATE DROWSY'}</span>
+          </button>
 
           {/* Sound Toggle Button */}
           <button
