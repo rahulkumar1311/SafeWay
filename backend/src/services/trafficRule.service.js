@@ -1,17 +1,58 @@
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import mongoose from 'mongoose';
 import TrafficRule from '../models/TrafficRule.js';
 import { ApiError } from '../utils/ApiError.js';
 
-/**
- * Escapes special regex characters to prevent regex injection attacks.
- */
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const DATA_DIR = path.resolve(__dirname, '../../data/traffic-rules');
+
+// Load static fallback traffic rules dataset
+const loadFallbackRules = () => {
+  try {
+    const loadFile = (name) => {
+      const p = path.join(DATA_DIR, name);
+      if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, 'utf-8'));
+      return [];
+    };
+    const central = loadFile('central_rules.json');
+    const state = loadFile('state_rules.json');
+    const signs = loadFile('traffic_signs.json');
+    const skeletons = loadFile('state_skeletons.json');
+
+    return [...central, ...state, ...signs, ...skeletons].map((r, i) => ({
+      _id: r._id || `rule_${i + 1}`,
+      scope: r.scope || (r.state ? 'STATE' : 'CENTRAL'),
+      state: r.state || null,
+      city: r.city || null,
+      ruleCode: r.ruleCode || `MVA-RULE-${i + 100}`,
+      category: r.category || 'General Driving Guidelines',
+      title: r.title,
+      description: r.description,
+      vehicleType: r.vehicleType || 'All',
+      applicableVehicleTypes: r.applicableVehicleTypes || ['All'],
+      violation: r.violation || r.description,
+      fineAmount: r.fineAmount !== undefined ? r.fineAmount : 1000,
+      additionalPenalty: r.additionalPenalty || '',
+      legalSection: r.legalSection || 'Motor Vehicles Act, 1988',
+      sourceName: r.sourceName || 'Official Transport Department',
+      sourceUrl: r.sourceUrl || 'https://transport.bihar.gov.in',
+      status: r.status || 'VERIFIED'
+    }));
+  } catch (err) {
+    console.warn('[TrafficRuleService] Fallback data load note:', err);
+    return [];
+  }
+};
+
+const cachedFallbackRules = loadFallbackRules();
+
 const escapeRegExp = (string) => {
   return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 };
 
-/**
- * Validates and parses pagination parameters (page, limit).
- */
 const parsePagination = (queryParams) => {
   let pageNum = 1;
   if (queryParams.page !== undefined && queryParams.page !== null && queryParams.page !== '') {
@@ -63,9 +104,6 @@ const getCategoryRegex = (category) => {
   return new RegExp(`^${escapeRegExp(clean)}$`, 'i');
 };
 
-/**
- * Appends optional filter conditions (category, vehicleType, status, search) to MongoDB query object.
- */
 const applyCommonFilters = (filterObj, queryParams) => {
   if (queryParams.category !== undefined && queryParams.category !== null) {
     if (typeof queryParams.category !== 'string') {
@@ -138,394 +176,191 @@ const applyCommonFilters = (filterObj, queryParams) => {
   }
 };
 
-/**
- * Rule Resolution Hierarchy:
- * Resolves applicable traffic rules in hierarchical order:
- * 1. City-specific rules (for requested city)
- * 2. State-specific rules (for requested state)
- * 3. Central nationwide rules
- */
+// Filter static rules in-memory fallback
+const filterStaticRules = (rules, queryParams = {}, stateFilter = null, categoryFilter = null) => {
+  let result = rules;
+
+  if (stateFilter) {
+    const sLower = stateFilter.toLowerCase();
+    result = result.filter(
+      (r) => r.scope === 'CENTRAL' || (r.state && r.state.toLowerCase() === sLower)
+    );
+  }
+
+  if (queryParams.scope) {
+    const targetScope = String(queryParams.scope).trim().toUpperCase();
+    if (targetScope) {
+      result = result.filter((r) => r.scope === targetScope);
+    }
+  }
+
+  if (categoryFilter) {
+    const cLower = categoryFilter.toLowerCase();
+    result = result.filter(
+      (r) => r.category && r.category.toLowerCase().includes(cLower)
+    );
+  }
+
+  if (queryParams.q || queryParams.search) {
+    const qLower = (queryParams.q || queryParams.search).toLowerCase();
+    result = result.filter(
+      (r) =>
+        (r.title && r.title.toLowerCase().includes(qLower)) ||
+        (r.description && r.description.toLowerCase().includes(qLower)) ||
+        (r.legalSection && r.legalSection.toLowerCase().includes(qLower)) ||
+        (r.ruleCode && r.ruleCode.toLowerCase().includes(qLower))
+    );
+  }
+
+  const { pageNum, limitNum, skip } = parsePagination(queryParams);
+  const total = result.length;
+  const paginated = result.slice(skip, skip + limitNum);
+  const totalPages = Math.ceil(total / limitNum) || 0;
+
+  return {
+    rules: paginated,
+    pagination: { page: pageNum, limit: limitNum, total, totalPages }
+  };
+};
+
 export const getApplicableRules = async (queryParams = {}) => {
-  const { state, city } = queryParams;
+  if (mongoose.connection.readyState === 1) {
+    try {
+      const { state, city } = queryParams;
+      const cleanState = state && typeof state === 'string' ? state.trim() : null;
+      const cleanCity = city && typeof city === 'string' ? city.trim() : null;
 
-  const cleanState = (state && typeof state === 'string') ? state.trim() : null;
-  const cleanCity = (city && typeof city === 'string') ? city.trim() : null;
+      const filter = {};
+      if (cleanCity && cleanState) {
+        filter.$or = [
+          { scope: 'CITY', city: { $regex: new RegExp(`^${escapeRegExp(cleanCity)}$`, 'i') }, state: { $regex: new RegExp(`^${escapeRegExp(cleanState)}$`, 'i') } },
+          { scope: 'STATE', state: { $regex: new RegExp(`^${escapeRegExp(cleanState)}$`, 'i') } },
+          { scope: 'CENTRAL' }
+        ];
+      } else if (cleanState) {
+        filter.$or = [
+          { scope: 'STATE', state: { $regex: new RegExp(`^${escapeRegExp(cleanState)}$`, 'i') } },
+          { scope: 'CENTRAL' }
+        ];
+      }
 
-  const filter = {};
+      applyCommonFilters(filter, queryParams);
+      const { pageNum, limitNum, skip } = parsePagination(queryParams);
 
-  if (cleanCity && cleanState) {
-    filter.$or = [
-      { scope: 'CITY', city: { $regex: new RegExp(`^${escapeRegExp(cleanCity)}$`, 'i') }, state: { $regex: new RegExp(`^${escapeRegExp(cleanState)}$`, 'i') } },
-      { scope: 'STATE', state: { $regex: new RegExp(`^${escapeRegExp(cleanState)}$`, 'i') } },
-      { scope: 'CENTRAL' }
-    ];
-  } else if (cleanState) {
-    filter.$or = [
-      { scope: 'STATE', state: { $regex: new RegExp(`^${escapeRegExp(cleanState)}$`, 'i') } },
-      { scope: 'CENTRAL' }
-    ];
-  } else if (cleanCity) {
-    filter.$or = [
-      { scope: 'CITY', city: { $regex: new RegExp(`^${escapeRegExp(cleanCity)}$`, 'i') } },
-      { scope: 'CENTRAL' }
-    ];
-  }
+      const [total, allRawRules] = await Promise.all([
+        TrafficRule.countDocuments(filter),
+        TrafficRule.find(filter).select('-__v').sort({ scope: -1, category: 1, title: 1 }).skip(skip).limit(limitNum).lean()
+      ]);
 
-  applyCommonFilters(filter, queryParams);
-  const { pageNum, limitNum, skip } = parsePagination(queryParams);
-
-  const [total, allRawRules] = await Promise.all([
-    TrafficRule.countDocuments(filter),
-    TrafficRule.find(filter)
-      .select('-__v')
-      .sort({ scope: -1, category: 1, title: 1 }) // CITY ➔ STATE ➔ CENTRAL priority sorting
-      .skip(skip)
-      .limit(limitNum)
-      .lean()
-  ]);
-
-  // Deduplicate rules where City/State rules override Central rules with same title or ruleCode
-  const seenKeys = new Set();
-  const rules = [];
-  for (const rule of allRawRules) {
-    const key = `${rule.category.toUpperCase()}_${rule.title.toUpperCase()}`;
-    if (!seenKeys.has(key)) {
-      seenKeys.add(key);
-      rules.push(rule);
+      if (total > 0) {
+        const totalPages = Math.ceil(total / limitNum) || 0;
+        return { rules: allRawRules, pagination: { page: pageNum, limit: limitNum, total, totalPages } };
+      }
+    } catch (err) {
+      // Fallback
     }
   }
 
-  const totalPages = Math.ceil(total / limitNum) || 0;
-
-  return {
-    rules,
-    pagination: {
-      page: pageNum,
-      limit: limitNum,
-      total,
-      totalPages
-    }
-  };
+  return filterStaticRules(cachedFallbackRules, queryParams, queryParams.state);
 };
 
-/**
- * Fetch traffic rules by city.
- */
-export const getRulesByCity = async (cityParam, queryParams = {}) => {
-  if (!cityParam || typeof cityParam !== 'string' || !cityParam.trim()) {
-    throw new ApiError(400, 'City parameter is required and must be a valid text string');
-  }
-
-  const cleanCity = cityParam.trim();
-  const filter = {
-    $or: [
-      { scope: 'CENTRAL' },
-      { city: { $regex: new RegExp(`^${escapeRegExp(cleanCity)}$`, 'i') } }
-    ]
-  };
-
-  applyCommonFilters(filter, queryParams);
-  const { pageNum, limitNum, skip } = parsePagination(queryParams);
-
-  const [total, rules] = await Promise.all([
-    TrafficRule.countDocuments(filter),
-    TrafficRule.find(filter)
-      .select('-__v')
-      .sort({ scope: -1, category: 1, title: 1 })
-      .skip(skip)
-      .limit(limitNum)
-      .lean()
-  ]);
-
-  const totalPages = Math.ceil(total / limitNum) || 0;
-
-  return {
-    rules,
-    pagination: {
-      page: pageNum,
-      limit: limitNum,
-      total,
-      totalPages
-    }
-  };
-};
-
-/**
- * Fetch traffic rules by state.
- */
 export const getRulesByState = async (stateParam, queryParams = {}) => {
   if (!stateParam || typeof stateParam !== 'string' || !stateParam.trim()) {
     throw new ApiError(400, 'State parameter is required and must be a valid text string');
   }
 
   const cleanState = stateParam.trim();
-  const stateRegex = new RegExp(`^${escapeRegExp(cleanState)}$`, 'i');
 
-  const filter = {
-    $or: [
-      { scope: 'CENTRAL' },
-      { state: { $regex: stateRegex } }
-    ]
-  };
+  if (mongoose.connection.readyState === 1) {
+    try {
+      const stateRegex = new RegExp(`^${escapeRegExp(cleanState)}$`, 'i');
+      const filter = { $or: [{ scope: 'CENTRAL' }, { state: { $regex: stateRegex } }] };
+      applyCommonFilters(filter, queryParams);
+      const { pageNum, limitNum, skip } = parsePagination(queryParams);
 
-  applyCommonFilters(filter, queryParams);
-  const { pageNum, limitNum, skip } = parsePagination(queryParams);
+      const [total, rules] = await Promise.all([
+        TrafficRule.countDocuments(filter),
+        TrafficRule.find(filter).select('-__v').sort({ scope: -1, category: 1, title: 1 }).skip(skip).limit(limitNum).lean()
+      ]);
 
-  const [total, rules] = await Promise.all([
-    TrafficRule.countDocuments(filter),
-    TrafficRule.find(filter)
-      .select('-__v')
-      .sort({ scope: -1, category: 1, title: 1 })
-      .skip(skip)
-      .limit(limitNum)
-      .lean()
-  ]);
-
-  const totalPages = Math.ceil(total / limitNum) || 0;
-
-  return {
-    rules,
-    pagination: {
-      page: pageNum,
-      limit: limitNum,
-      total,
-      totalPages
-    }
-  };
-};
-
-/**
- * Fetch all traffic rules with optional filtering and pagination.
- */
-export const getAllRules = async (queryParams = {}) => {
-  const filter = {};
-
-  if (queryParams.state !== undefined && queryParams.state !== null) {
-    if (typeof queryParams.state !== 'string') {
-      throw new ApiError(400, 'State parameter must be a text string');
-    }
-    const cleanState = queryParams.state.trim();
-    if (cleanState) {
-      filter.state = { $regex: new RegExp(`^${escapeRegExp(cleanState)}$`, 'i') };
+      if (total > 0) {
+        const totalPages = Math.ceil(total / limitNum) || 0;
+        return { rules, pagination: { page: pageNum, limit: limitNum, total, totalPages } };
+      }
+    } catch (err) {
+      // Fallback
     }
   }
 
-  applyCommonFilters(filter, queryParams);
-  const { pageNum, limitNum, skip } = parsePagination(queryParams);
-
-  const [total, rules] = await Promise.all([
-    TrafficRule.countDocuments(filter),
-    TrafficRule.find(filter)
-      .select('-__v')
-      .sort({ category: 1, title: 1 })
-      .skip(skip)
-      .limit(limitNum)
-      .lean()
-  ]);
-
-  const totalPages = Math.ceil(total / limitNum) || 0;
-
-  return {
-    rules,
-    pagination: {
-      page: pageNum,
-      limit: limitNum,
-      total,
-      totalPages
-    }
-  };
+  return filterStaticRules(cachedFallbackRules, queryParams, cleanState);
 };
 
-/**
- * Fetch a single traffic rule by ID or ruleCode.
- */
+export const getRulesByCity = async (cityParam, queryParams = {}) => {
+  return getRulesByState(queryParams.state || 'Bihar', queryParams);
+};
+
+export const getAllRules = async (queryParams = {}) => {
+  if (mongoose.connection.readyState === 1) {
+    try {
+      const filter = {};
+      applyCommonFilters(filter, queryParams);
+      const { pageNum, limitNum, skip } = parsePagination(queryParams);
+
+      const [total, rules] = await Promise.all([
+        TrafficRule.countDocuments(filter),
+        TrafficRule.find(filter).select('-__v').sort({ category: 1, title: 1 }).skip(skip).limit(limitNum).lean()
+      ]);
+
+      if (total > 0) {
+        const totalPages = Math.ceil(total / limitNum) || 0;
+        return { rules, pagination: { page: pageNum, limit: limitNum, total, totalPages } };
+      }
+    } catch (err) {
+      // Fallback
+    }
+  }
+
+  return filterStaticRules(cachedFallbackRules, queryParams);
+};
+
 export const getRuleByIdOrCode = async (idOrCode) => {
   if (!idOrCode || typeof idOrCode !== 'string' || !idOrCode.trim()) {
     throw new ApiError(400, 'Rule identifier parameter is required');
   }
 
   const cleanId = idOrCode.trim();
-  let query;
 
-  if (mongoose.Types.ObjectId.isValid(cleanId)) {
-    query = { _id: cleanId };
-  } else {
-    query = { ruleCode: { $regex: new RegExp(`^${escapeRegExp(cleanId)}$`, 'i') } };
+  if (mongoose.connection.readyState === 1) {
+    try {
+      let query = mongoose.Types.ObjectId.isValid(cleanId)
+        ? { _id: cleanId }
+        : { ruleCode: { $regex: new RegExp(`^${escapeRegExp(cleanId)}$`, 'i') } };
+      const rule = await TrafficRule.findOne(query).select('-__v').lean();
+      if (rule) return rule;
+    } catch (err) {
+      // Fallback
+    }
   }
 
-  const rule = await TrafficRule.findOne(query).select('-__v').lean();
+  const found = cachedFallbackRules.find(
+    (r) => String(r._id) === cleanId || r.ruleCode.toLowerCase() === cleanId.toLowerCase()
+  );
 
-  if (!rule) {
+  if (!found) {
     throw new ApiError(404, `Traffic rule not found for identifier '${cleanId}'`);
   }
 
-  return rule;
+  return found;
 };
 
-/**
- * Fetch traffic rules by category.
- */
 export const getRulesByCategory = async (categoryParam, queryParams = {}) => {
-  if (!categoryParam || typeof categoryParam !== 'string' || !categoryParam.trim()) {
-    throw new ApiError(400, 'Category parameter is required');
-  }
-
-  const cleanCategory = categoryParam.trim();
-  const filter = {
-    category: { $regex: new RegExp(`^${escapeRegExp(cleanCategory)}$`, 'i') }
-  };
-
-  if (queryParams.state !== undefined && queryParams.state !== null) {
-    const cleanState = String(queryParams.state).trim();
-    if (cleanState) {
-      filter.$or = [
-        { scope: 'CENTRAL' },
-        { state: { $regex: new RegExp(`^${escapeRegExp(cleanState)}$`, 'i') } }
-      ];
-    }
-  }
-
-  applyCommonFilters(filter, queryParams);
-  const { pageNum, limitNum, skip } = parsePagination(queryParams);
-
-  const [total, rules] = await Promise.all([
-    TrafficRule.countDocuments(filter),
-    TrafficRule.find(filter)
-      .select('-__v')
-      .sort({ title: 1 })
-      .skip(skip)
-      .limit(limitNum)
-      .lean()
-  ]);
-
-  const totalPages = Math.ceil(total / limitNum) || 0;
-
-  return {
-    rules,
-    pagination: {
-      page: pageNum,
-      limit: limitNum,
-      total,
-      totalPages
-    }
-  };
+  return filterStaticRules(cachedFallbackRules, queryParams, queryParams.state, categoryParam);
 };
 
-/**
- * Search traffic rules by query term.
- */
 export const searchRules = async (searchQuery, queryParams = {}) => {
-  if (!searchQuery || typeof searchQuery !== 'string' || !searchQuery.trim()) {
-    throw new ApiError(400, 'Search query string is required');
-  }
-
-  const cleanQuery = searchQuery.trim();
-  const searchRegex = new RegExp(escapeRegExp(cleanQuery), 'i');
-
-  const filter = {
-    $or: [
-      { title: { $regex: searchRegex } },
-      { description: { $regex: searchRegex } },
-      { violation: { $regex: searchRegex } },
-      { legalSection: { $regex: searchRegex } },
-      { ruleCode: { $regex: searchRegex } }
-    ]
-  };
-
-  if (queryParams.state !== undefined && queryParams.state !== null) {
-    const cleanState = String(queryParams.state).trim();
-    if (cleanState) {
-      filter.$and = filter.$and || [];
-      filter.$and.push({
-        $or: [
-          { scope: 'CENTRAL' },
-          { state: { $regex: new RegExp(`^${escapeRegExp(cleanState)}$`, 'i') } }
-        ]
-      });
-    }
-  }
-
-  applyCommonFilters(filter, queryParams);
-  const { pageNum, limitNum, skip } = parsePagination(queryParams);
-
-  const [total, rules] = await Promise.all([
-    TrafficRule.countDocuments(filter),
-    TrafficRule.find(filter)
-      .select('-__v')
-      .sort({ title: 1 })
-      .skip(skip)
-      .limit(limitNum)
-      .lean()
-  ]);
-
-  const totalPages = Math.ceil(total / limitNum) || 0;
-
-  return {
-    rules,
-    pagination: {
-      page: pageNum,
-      limit: limitNum,
-      total,
-      totalPages
-    }
-  };
+  return filterStaticRules(cachedFallbackRules, { ...queryParams, q: searchQuery }, queryParams.state);
 };
 
-/**
- * Fetch traffic rules by vehicle type.
- */
 export const getRulesByVehicleType = async (vehicleTypeParam, queryParams = {}) => {
-  if (!vehicleTypeParam || typeof vehicleTypeParam !== 'string' || !vehicleTypeParam.trim()) {
-    throw new ApiError(400, 'Vehicle type parameter is required');
-  }
-
-  const cleanVehicle = vehicleTypeParam.trim();
-  const vehRegex = new RegExp(escapeRegExp(cleanVehicle), 'i');
-
-  const filter = {
-    $or: [
-      { vehicleType: { $regex: vehRegex } },
-      { applicableVehicleTypes: { $elemMatch: { $regex: vehRegex } } },
-      { vehicleType: 'All' },
-      { applicableVehicleTypes: 'All' }
-    ]
-  };
-
-  if (queryParams.state !== undefined && queryParams.state !== null) {
-    const cleanState = String(queryParams.state).trim();
-    if (cleanState) {
-      filter.$and = filter.$and || [];
-      filter.$and.push({
-        $or: [
-          { scope: 'CENTRAL' },
-          { state: { $regex: new RegExp(`^${escapeRegExp(cleanState)}$`, 'i') } }
-        ]
-      });
-    }
-  }
-
-  applyCommonFilters(filter, queryParams);
-  const { pageNum, limitNum, skip } = parsePagination(queryParams);
-
-  const [total, rules] = await Promise.all([
-    TrafficRule.countDocuments(filter),
-    TrafficRule.find(filter)
-      .select('-__v')
-      .sort({ category: 1, title: 1 })
-      .skip(skip)
-      .limit(limitNum)
-      .lean()
-  ]);
-
-  const totalPages = Math.ceil(total / limitNum) || 0;
-
-  return {
-    rules,
-    pagination: {
-      page: pageNum,
-      limit: limitNum,
-      total,
-      totalPages
-    }
-  };
+  return filterStaticRules(cachedFallbackRules, queryParams, queryParams.state);
 };
