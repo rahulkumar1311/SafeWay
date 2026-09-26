@@ -30,10 +30,14 @@ export const getHealthStatus = asyncHandler(async (req, res) => {
       aiReason = `HTTP ${aiRes.status} from ${targetUrl}`;
     }
   } catch (err) {
-    aiStatus = 'offline';
     const causeCode = err.cause?.code || err.code || (err.name === 'AbortError' ? 'ETIMEDOUT' : 'ECONNREFUSED');
-    aiReason = `Connection failed (${causeCode}) on ${config.aiServiceBaseUrl}`;
-    console.warn(`[Node AI Gateway] Health check failed for ${config.aiServiceBaseUrl}: ${err.message} (${causeCode})`);
+    if (config.aiFallbackEnabled) {
+      aiStatus = 'online';
+      aiReason = `Node AI Fallback Active (${config.aiServiceBaseUrl} unreachable: ${causeCode})`;
+    } else {
+      aiStatus = 'offline';
+      aiReason = `Connection failed (${causeCode}) on ${config.aiServiceBaseUrl}`;
+    }
   }
 
   return res.status(200).json({
