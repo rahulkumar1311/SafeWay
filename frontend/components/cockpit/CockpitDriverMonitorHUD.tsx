@@ -5,22 +5,42 @@ import { Eye, User, AlertTriangle, CheckCircle2 } from 'lucide-react';
 
 interface CockpitDriverMonitorHUDProps {
   isFaceDetected?: boolean;
+  faceDetected?: boolean;
   isEyesOpen?: boolean;
   earValue?: number | null;
+  ear?: number | null;
   eyeClosureDurationSeconds?: number;
+  closureDurationMs?: number;
   drowsinessScore?: number | null;
+  score?: number | null;
+  isDrowsy?: boolean;
   alertState?: 'NORMAL' | 'WARNING' | 'DROWSY' | 'ALERT';
 }
 
 export const CockpitDriverMonitorHUD: React.FC<CockpitDriverMonitorHUDProps> = ({
-  isFaceDetected = true,
-  isEyesOpen = true,
-  earValue = 0.28,
-  eyeClosureDurationSeconds = 0.0,
-  drowsinessScore = 12,
+  isFaceDetected,
+  faceDetected,
+  isEyesOpen,
+  earValue,
+  ear,
+  eyeClosureDurationSeconds,
+  closureDurationMs,
+  drowsinessScore,
+  score,
+  isDrowsy: isDrowsyProp,
   alertState = 'NORMAL'
 }) => {
-  const isDrowsy = alertState === 'DROWSY' || alertState === 'ALERT' || (drowsinessScore !== null && drowsinessScore > 50);
+  const activeFace = faceDetected !== undefined ? faceDetected : (isFaceDetected !== undefined ? isFaceDetected : true);
+  const activeEar = ear !== undefined ? ear : (earValue !== undefined ? earValue : 0.28);
+  const activeDurationSec = closureDurationMs !== undefined ? (closureDurationMs / 1000) : (eyeClosureDurationSeconds !== undefined ? eyeClosureDurationSeconds : 0.0);
+  const activeScore = score !== undefined ? score : (drowsinessScore !== undefined ? drowsinessScore : 12);
+  const isDrowsy = Boolean(
+    isDrowsyProp ||
+    alertState === 'DROWSY' ||
+    alertState === 'ALERT' ||
+    (activeScore !== null && activeScore >= 70) ||
+    activeDurationSec >= 3.0
+  );
 
   return (
     <div className="w-full bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4 font-mono">
@@ -44,8 +64,8 @@ export const CockpitDriverMonitorHUD: React.FC<CockpitDriverMonitorHUDProps> = (
             <User className="w-3.5 h-3.5 text-slate-400" />
             <span>FACE TRACKING</span>
           </div>
-          <span className={`text-xs font-extrabold block ${isFaceDetected ? 'text-emerald-700' : 'text-slate-400'}`}>
-            {isFaceDetected ? '● FACE DETECTED' : '○ NO FACE'}
+          <span className={`text-xs font-extrabold block ${activeFace ? 'text-emerald-700' : 'text-slate-400'}`}>
+            {activeFace ? '● FACE DETECTED' : '○ NO FACE'}
           </span>
         </div>
 
@@ -55,7 +75,7 @@ export const CockpitDriverMonitorHUD: React.FC<CockpitDriverMonitorHUDProps> = (
             <span>EYE ASPECT RATIO (EAR)</span>
           </div>
           <span className="text-xs font-extrabold text-slate-900 block">
-            {earValue !== null ? earValue.toFixed(2) : '0.28'}
+            {activeEar !== null ? activeEar.toFixed(2) : '0.28'}
           </span>
         </div>
 
@@ -63,8 +83,8 @@ export const CockpitDriverMonitorHUD: React.FC<CockpitDriverMonitorHUDProps> = (
           <div className="flex items-center gap-1.5 text-[10px] text-slate-500 font-bold uppercase">
             <span>EYE CLOSURE TIME</span>
           </div>
-          <span className={`text-xs font-extrabold block ${eyeClosureDurationSeconds > 1.5 ? 'text-amber-700' : 'text-slate-900'}`}>
-            {eyeClosureDurationSeconds.toFixed(1)}s
+          <span className={`text-xs font-extrabold block ${activeDurationSec > 1.5 ? 'text-amber-700' : 'text-slate-900'}`}>
+            {activeDurationSec.toFixed(1)}s
           </span>
         </div>
 
@@ -73,7 +93,7 @@ export const CockpitDriverMonitorHUD: React.FC<CockpitDriverMonitorHUDProps> = (
             <span>FATIGUE SCORE</span>
           </div>
           <span className={`text-xs font-extrabold block ${isDrowsy ? 'text-rose-700' : 'text-emerald-700'}`}>
-            {drowsinessScore !== null ? `${drowsinessScore}%` : '12%'}
+            {activeScore !== null ? `${activeScore}%` : '12%'}
           </span>
         </div>
       </div>
