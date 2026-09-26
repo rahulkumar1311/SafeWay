@@ -135,19 +135,19 @@ export const CockpitCameraHUD: React.FC<CockpitCameraHUDProps> = ({
       const isFace = data.faceDetected !== false;
       const targetOpacity = isFace ? 1.0 : 0.0;
       smooth.opacity += (targetOpacity - smooth.opacity) * 0.15;
-      smooth.arcAngle += 0.04;
+      smooth.arcAngle += 0.05;
 
       const fw = data.frameWidth || 480;
       const fh = data.frameHeight || 360;
 
       // Extract normalized coordinates from trackingData
-      let fxNorm = 0.26;
+      let fxNorm = 0.25;
       let fyNorm = 0.18;
-      let fwNorm = 0.48;
+      let fwNorm = 0.50;
       let fhNorm = 0.62;
-      let lxNorm = 0.41;
+      let lxNorm = 0.40;
       let lyNorm = 0.42;
-      let rxNorm = 0.59;
+      let rxNorm = 0.60;
       let ryNorm = 0.42;
 
       if (data.faceRect && Array.isArray(data.faceRect) && data.faceRect.length === 4) {
@@ -195,16 +195,27 @@ export const CockpitCameraHUD: React.FC<CockpitCameraHUDProps> = ({
       smooth.rx += (targetRx - smooth.rx) * 0.22;
       smooth.ry += (targetRy - smooth.ry) * 0.22;
 
-      const isDrowsy = Boolean(data.isDrowsy || (data.score !== null && data.score !== undefined && data.score >= 70) || (data.closureDurationMs && data.closureDurationMs >= 3000));
-      const isBlinking = !isDrowsy && (data.eyeState === 'CLOSED' || data.eyeState === 'CLOSING' || (data.closureDurationMs && data.closureDurationMs > 0) || (data.ear !== null && data.ear !== undefined && data.ear < 0.22));
+      const isDrowsy = Boolean(
+        data.isDrowsy ||
+        data.alertState === 'DROWSY' ||
+        data.alertState === 'ALERT' ||
+        (data.closureDurationMs && data.closureDurationMs >= 3000)
+      );
 
-      // Automotive Theme Colors
-      const mainColor = isDrowsy ? '#EF4444' : isBlinking ? '#F59E0B' : '#00AEEF';
-      const secondaryColor = isDrowsy ? '#DC2626' : isBlinking ? '#D97706' : '#1687E8';
+      const isClosing = !isDrowsy && Boolean(
+        data.eyeState === 'CLOSED' ||
+        data.eyeState === 'CLOSING' ||
+        (data.closureDurationMs && data.closureDurationMs > 0) ||
+        (data.ear !== null && data.ear !== undefined && data.ear < 0.22)
+      );
+
+      // Dynamic Color Theme Palette
+      const mainColor = isDrowsy ? '#EF4444' : isClosing ? '#F59E0B' : '#00AEEF';
+      const secondaryColor = isDrowsy ? '#DC2626' : isClosing ? '#D97706' : '#1687E8';
       const glowColor = isDrowsy
-        ? 'rgba(239, 68, 68, 0.45)'
-        : isBlinking
-        ? 'rgba(245, 158, 11, 0.4)'
+        ? 'rgba(239, 68, 68, 0.55)'
+        : isClosing
+        ? 'rgba(245, 158, 11, 0.45)'
         : 'rgba(0, 174, 239, 0.35)';
 
       // --- 1. FACE DETECTED OVERLAY (EYE RINGS + CORNERS + SCANNER) ---
@@ -221,14 +232,21 @@ export const CockpitCameraHUD: React.FC<CockpitCameraHUDProps> = ({
         const rx = smooth.rx;
         const ry = smooth.ry;
 
+        // Pulsing Face Overlay for Drowsiness Alert (RED -> transparent -> RED)
+        if (isDrowsy) {
+          const pulseAlpha = 0.12 + (Math.sin(elapsed * 8) + 1) * 0.08;
+          ctx.fillStyle = `rgba(239, 68, 68, ${pulseAlpha})`;
+          ctx.fillRect(fx, fy, fw, fh);
+        }
+
         // A. Face Corner Brackets (Minimal corner brackets ┌ ┐ └ ┘, NOT solid box)
-        const cornerLen = Math.min(22, fw * 0.22);
+        const cornerLen = Math.min(24, fw * 0.22);
         ctx.strokeStyle = mainColor;
-        ctx.lineWidth = 2.2;
+        ctx.lineWidth = isDrowsy ? 2.8 : 2.2;
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
         ctx.shadowColor = glowColor;
-        ctx.shadowBlur = 6;
+        ctx.shadowBlur = isDrowsy ? 10 : 6;
 
         // Top-Left ┌
         ctx.beginPath();
@@ -259,14 +277,14 @@ export const CockpitCameraHUD: React.FC<CockpitCameraHUDProps> = ({
         ctx.stroke();
 
         // B. Subtle AI Vertical Scanning Laser Line
-        const scanPhase = (Math.sin(elapsed * 2.5) + 1) / 2; // 0 to 1
+        const scanPhase = (Math.sin(elapsed * 2.8) + 1) / 2; // 0 to 1
         const scanY = fy + 10 + scanPhase * (fh - 20);
 
         const scanGrad = ctx.createLinearGradient(fx, scanY - 6, fx, scanY + 6);
         scanGrad.addColorStop(0, 'rgba(0, 174, 239, 0.0)');
         scanGrad.addColorStop(
           0.5,
-          isDrowsy ? 'rgba(239, 68, 68, 0.3)' : isBlinking ? 'rgba(245, 158, 11, 0.25)' : 'rgba(0, 174, 239, 0.22)'
+          isDrowsy ? 'rgba(239, 68, 68, 0.35)' : isClosing ? 'rgba(245, 158, 11, 0.28)' : 'rgba(0, 174, 239, 0.22)'
         );
         scanGrad.addColorStop(1, 'rgba(0, 174, 239, 0.0)');
 
@@ -277,20 +295,20 @@ export const CockpitCameraHUD: React.FC<CockpitCameraHUDProps> = ({
         ctx.moveTo(fx + 4, scanY);
         ctx.lineTo(fx + fw - 4, scanY);
         ctx.strokeStyle = mainColor;
-        ctx.lineWidth = 1.0;
-        ctx.shadowBlur = 5;
+        ctx.lineWidth = 1.2;
+        ctx.shadowBlur = 6;
         ctx.stroke();
 
-        // C. AI Scanning Tag below Face Box
+        // C. AI Status Tag below Face Box
         ctx.shadowBlur = 0;
-        ctx.font = 'bold 8px monospace';
+        ctx.font = 'bold 8.5px monospace';
         ctx.fillStyle = mainColor;
         const statusText = isDrowsy
-          ? '⚠ DROWSINESS DETECTED'
-          : isBlinking
-          ? '▲ BLINK DETECTED'
-          : '● AI SCANNING ACTIVE';
-        ctx.fillText(statusText, fx + 2, fy + fh + 14);
+          ? '⚠ DROWSINESS DETECTED (EYES CLOSED)'
+          : isClosing
+          ? 'EYE CLOSURE DETECTED'
+          : '● AI TRACKING ACTIVE';
+        ctx.fillText(statusText, fx + 2, fy + fh + 15);
 
         // D. Eye-to-Eye Connection Tracking Line (◎ · · · · · · ◎)
         ctx.beginPath();
@@ -306,34 +324,34 @@ export const CockpitCameraHUD: React.FC<CockpitCameraHUDProps> = ({
         const midX = (lx + rx) / 2;
         const midY = (ly + ry) / 2;
         ctx.beginPath();
-        ctx.arc(midX, midY, 1.8, 0, Math.PI * 2);
+        ctx.arc(midX, midY, 2.0, 0, Math.PI * 2);
         ctx.fillStyle = mainColor;
         ctx.fill();
 
         // E. Function to Draw Real-Time Eye Tracking Rings + Pupil Dot
         const drawEyeRings = (cx: number, cy: number, label: string) => {
-          const pulse = Math.sin(elapsed * 5) * 1.2;
-          const outerR = Math.max(11, fw * 0.065) + (isDrowsy ? Math.sin(elapsed * 8) * 2.5 : pulse);
+          const pulse = Math.sin(elapsed * 5) * 1.5;
+          const outerR = Math.max(12, fw * 0.07) + (isDrowsy ? Math.sin(elapsed * 9) * 3 : pulse);
           const innerR = outerR * 0.54;
 
           // Outer Concentric Ring
           ctx.beginPath();
           ctx.arc(cx, cy, outerR, 0, Math.PI * 2);
           ctx.strokeStyle = mainColor;
-          ctx.lineWidth = 1.3;
+          ctx.lineWidth = 1.5;
           ctx.shadowColor = glowColor;
-          ctx.shadowBlur = 6;
+          ctx.shadowBlur = isDrowsy ? 9 : 6;
           ctx.stroke();
 
           // Rotating subtle arc on outer ring
           ctx.beginPath();
-          ctx.arc(cx, cy, outerR + 2, smooth.arcAngle, smooth.arcAngle + Math.PI * 0.6);
+          ctx.arc(cx, cy, outerR + 2, smooth.arcAngle, smooth.arcAngle + Math.PI * 0.65);
           ctx.strokeStyle = secondaryColor;
-          ctx.lineWidth = 1.0;
+          ctx.lineWidth = 1.1;
           ctx.stroke();
 
           // 4 Crosshair Ticks (0, 90, 180, 270 deg)
-          const tickLen = 3;
+          const tickLen = 3.5;
           const angles = [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2];
           angles.forEach((ang) => {
             const x1 = cx + Math.cos(ang) * (outerR - tickLen);
@@ -351,22 +369,22 @@ export const CockpitCameraHUD: React.FC<CockpitCameraHUDProps> = ({
           ctx.setLineDash([2, 2]);
           ctx.arc(cx, cy, innerR, 0, Math.PI * 2);
           ctx.strokeStyle = secondaryColor;
-          ctx.lineWidth = 0.9;
+          ctx.lineWidth = 1.0;
           ctx.stroke();
           ctx.setLineDash([]);
 
           // Center Pupil / Tracking Dot
           ctx.beginPath();
-          ctx.arc(cx, cy, 2.2, 0, Math.PI * 2);
+          ctx.arc(cx, cy, 2.4, 0, Math.PI * 2);
           ctx.fillStyle = mainColor;
-          ctx.shadowBlur = 6;
+          ctx.shadowBlur = 7;
           ctx.fill();
 
           // Small Eye Label
           ctx.shadowBlur = 0;
           ctx.font = 'bold 7px monospace';
-          ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-          ctx.fillText(label, cx - 10, cy - outerR - 3);
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+          ctx.fillText(label, cx - 10, cy - outerR - 4);
         };
 
         // Draw Left and Right Eye Tracking Rings
@@ -440,15 +458,15 @@ export const CockpitCameraHUD: React.FC<CockpitCameraHUDProps> = ({
       ctx.save();
       const badgeX = 10;
       const badgeY = 10;
-      const badgeW = 142;
+      const badgeW = 148;
       const badgeH = 34;
       const bR = 6;
 
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.78)';
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.82)';
       ctx.strokeStyle = isDrowsy
-        ? 'rgba(239, 68, 68, 0.6)'
-        : isBlinking
-        ? 'rgba(245, 158, 11, 0.5)'
+        ? 'rgba(239, 68, 68, 0.7)'
+        : isClosing
+        ? 'rgba(245, 158, 11, 0.6)'
         : 'rgba(255, 255, 255, 0.15)';
       ctx.lineWidth = 1;
 
@@ -473,11 +491,11 @@ export const CockpitCameraHUD: React.FC<CockpitCameraHUDProps> = ({
 
       // Bottom line: EYE TRACKING ACTIVE / BLINK / ALERT
       ctx.font = '7.5px monospace';
-      ctx.fillStyle = isDrowsy ? '#EF4444' : isBlinking ? '#F59E0B' : '#38BDF8';
+      ctx.fillStyle = isDrowsy ? '#EF4444' : isClosing ? '#F59E0B' : '#38BDF8';
       const badgeSub = isDrowsy
         ? '⚠ DROWSINESS ALERT'
-        : isBlinking
-        ? '▲ BLINKING DETECTED'
+        : isClosing
+        ? '▲ EYE CLOSURE DETECTED'
         : 'EYE TRACKING ACTIVE';
       ctx.fillText(badgeSub, badgeX + 8, badgeY + 25);
 
